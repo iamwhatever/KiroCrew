@@ -326,6 +326,7 @@ const PATROL_STOPPED_REASON: Record<string, string> = {
   runtime_budget: 'pages.membersPage.patrol_stopped_runtime_budget',
   approval_stalled: 'pages.membersPage.patrol_stopped_approval_stalled',
   interrupted: 'pages.membersPage.patrol_stopped_interrupted',
+  autonudge_stop: 'pages.membersPage.patrol_stopped_autonudge_stop',
 }
 /** How often the "next wake in …" countdown in the drawer re-reads the clock.
  *  Coarser than the popover's per-second tick on purpose: the drawer line is
@@ -2868,6 +2869,15 @@ export default function MembersPage() {
                       {PATROL_STOPPED_REASON[patrolStoppedReason]
                         ? t(PATROL_STOPPED_REASON[patrolStoppedReason])
                         : patrolStoppedReason}
+                    </span>
+                  )}
+                  {/* The crewmate's own words for a stop it chose (redacted and
+                      capped on the server), under the coded reason. Absent for
+                      every other stop. The switch that turns it back on is on
+                      the detail page, with the schedules. */}
+                  {activePatrol?.stopped_detail && (
+                    <span className="block mt-0.5 italic" data-testid="member-patrol-detail">
+                      {activePatrol.stopped_detail}
                     </span>
                   )}
                   {/* No rearm control here, deliberately. The state reads as a dead end

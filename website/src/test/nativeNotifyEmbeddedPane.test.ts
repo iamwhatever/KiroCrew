@@ -17,6 +17,7 @@ import { store as globalStore } from '../store'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useNativeNotification } from '../hooks/useNativeNotification'
 import { CHAT_COMPLETE_NOTIFY_KEY } from '../hooks/chatCompleteNotify'
+import { readNotificationPermission } from '../hooks/useNotificationPermission'
 import { addNotification } from '../store/notificationsSlice'
 import { sseSlots } from '../store/dashboardSlice'
 import type { Notification as AppNotification } from '../types'
@@ -84,6 +85,8 @@ describe('embedded instance pane relays native notifications to the parent', () 
     postMessage = vi.fn()
     originalParent = window.parent
     Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } })
+    // The Instances hub that embedded this pane: a loopback http origin.
+    Object.defineProperty(document, 'referrer', { configurable: true, value: 'http://127.0.0.1:8787/' })
   })
 
   afterEach(() => {
@@ -182,6 +185,13 @@ describe('embedded instance pane relays native notifications to the parent', () 
     })
 
     expect(relayed()).toHaveLength(0)
+  })
+
+  it('permission-facing UI defers to the hub: the pane reads unsupported, not its own denied', () => {
+    expect(readNotificationPermission()).toBe('unsupported')
+    // An embedded frame with no relay target keeps reporting its real verdict.
+    Object.defineProperty(document, 'referrer', { configurable: true, value: 'https://host.example/' })
+    expect(readNotificationPermission()).toBe('denied')
   })
 
   it('bell note: relays the note, constructs nothing, never prompts', () => {

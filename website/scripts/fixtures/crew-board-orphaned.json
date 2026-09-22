@@ -1,0 +1,130 @@
+{
+  "conductor": {
+    "schema": 1,
+    "slot_key": "chat-1888-orphan-conductor",
+    "goal": "Land the ledger wake hook before the freeze",
+    "round": 0,
+    "depth": 0,
+    "parent_item": null,
+    "created_at": "2026-09-22T15:05:35+00:00"
+  },
+  "conductor_alive": "closed",
+  "items": [
+    {
+      "schema": 1,
+      "item_id": "it_3b6a1545",
+      "title": "Rebase the wake hook onto the rewritten append path",
+      "acceptance": {
+        "kind": "pr_checks",
+        "pr": 12244,
+        "repo": "kirodotdev/KiroCrew"
+      },
+      "state": "open",
+      "verdict": null,
+      "decision": "",
+      "round": 0,
+      "fails": 0,
+      "status": "question",
+      "summary": "Two call sites now append under the lock. Which one owns the wake?",
+      "artifacts": {
+        "branch": "feat/wake-hook-rebase"
+      },
+      "pr": null,
+      "last_report_at": "2026-09-22T15:05:35+00:00",
+      "created_at": "2026-09-22T15:05:35+00:00",
+      "closed_at": null,
+      "orphaned": true,
+      "stale": false,
+      "acceptance_concrete": true,
+      "events": [
+        {
+          "id": "1d169f75637c9b60",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_3b6a1545",
+          "kind": "create",
+          "status": null,
+          "text": "Rebase the wake hook onto the rewritten append path"
+        },
+        {
+          "id": "a37b3e0fd109d3a3",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_3b6a1545",
+          "kind": "bind",
+          "status": null,
+          "text": ""
+        },
+        {
+          "id": "3123cde9f3fd471b",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_3b6a1545",
+          "kind": "report",
+          "status": "question",
+          "text": "Two call sites now append under the lock. Which one owns the wake?"
+        }
+      ],
+      "alive": "running",
+      "outstanding": true,
+      "terminal": false
+    },
+    {
+      "schema": 1,
+      "item_id": "it_62423cbe",
+      "title": "Retire the duplicated append helper",
+      "acceptance": {
+        "kind": "pr_checks",
+        "pr": 12245,
+        "repo": "kirodotdev/KiroCrew"
+      },
+      "state": "open",
+      "verdict": null,
+      "decision": "",
+      "round": 0,
+      "fails": 0,
+      "status": "progress",
+      "summary": "Helper inlined at both call sites; the old one is unreferenced now.",
+      "artifacts": {
+        "branch": "feat/retire-append-helper"
+      },
+      "pr": null,
+      "last_report_at": "2026-09-22T15:05:35+00:00",
+      "created_at": "2026-09-22T15:05:35+00:00",
+      "closed_at": null,
+      "orphaned": true,
+      "stale": false,
+      "acceptance_concrete": true,
+      "events": [
+        {
+          "id": "278e0bbff72a2b34",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_62423cbe",
+          "kind": "create",
+          "status": null,
+          "text": "Retire the duplicated append helper"
+        },
+        {
+          "id": "5506efc0ec7a5306",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_62423cbe",
+          "kind": "bind",
+          "status": null,
+          "text": ""
+        },
+        {
+          "id": "6b092c7419fd2ce7",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_62423cbe",
+          "kind": "report",
+          "status": "progress",
+          "text": "Helper inlined at both call sites; the old one is unreferenced now."
+        }
+      ],
+      "alive": "closed",
+      "outstanding": false,
+      "terminal": false
+    }
+  ],
+  "channels_available": false,
+  "stop_available": true,
+  "take_over_available": false,
+  "take_over_unavailable_code": "no_server_primitive"
+}

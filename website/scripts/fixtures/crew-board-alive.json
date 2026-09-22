@@ -1,0 +1,307 @@
+{
+  "conductor": {
+    "schema": 1,
+    "slot_key": "chat-1750-conductor",
+    "goal": "Ship the conductor work ledger end to end (RFC Phases 1-5)",
+    "round": 0,
+    "depth": 0,
+    "parent_item": null,
+    "created_at": "2026-09-22T15:05:35+00:00"
+  },
+  "conductor_alive": "idle",
+  "items": [
+    {
+      "schema": 1,
+      "item_id": "it_031f33fd",
+      "title": "Wake hook on the ledger append path",
+      "acceptance": {
+        "kind": "pr_checks",
+        "pr": 12207,
+        "repo": "kirodotdev/KiroCrew"
+      },
+      "state": "open",
+      "verdict": null,
+      "decision": "",
+      "round": 0,
+      "fails": 0,
+      "status": "question",
+      "summary": "Append fires inside the store lock. Waking there risks re-entry; waking after the write can lose a wake if the process dies between.",
+      "artifacts": {
+        "branch": "feat/ledger-wake-hook"
+      },
+      "pr": null,
+      "last_report_at": "2026-09-22T15:05:35+00:00",
+      "created_at": "2026-09-22T15:05:35+00:00",
+      "closed_at": null,
+      "orphaned": false,
+      "stale": false,
+      "acceptance_concrete": true,
+      "events": [
+        {
+          "id": "e139c01ff1594569",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_031f33fd",
+          "kind": "create",
+          "status": null,
+          "text": "Wake hook on the ledger append path"
+        },
+        {
+          "id": "07bd7f398b2f705f",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_031f33fd",
+          "kind": "bind",
+          "status": null,
+          "text": ""
+        },
+        {
+          "id": "ea5a9d64a3cbca86",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_031f33fd",
+          "kind": "report",
+          "status": "question",
+          "text": "Append fires inside the store lock. Waking there risks re-entry; waking after the write can lose a wake if the process dies between."
+        }
+      ],
+      "alive": "idle",
+      "outstanding": true,
+      "terminal": false
+    },
+    {
+      "schema": 1,
+      "item_id": "it_3db49d6f",
+      "title": "Mask the worker key out of every browser payload",
+      "acceptance": {
+        "kind": "pr_checks",
+        "pr": 12195,
+        "repo": "kirodotdev/KiroCrew"
+      },
+      "state": "accepted",
+      "verdict": "pass",
+      "decision": "Verified against the bar. Accepted.",
+      "round": 0,
+      "fails": 0,
+      "status": "done",
+      "summary": "Item field and the bind event's text both masked; whole-payload assertion added.",
+      "artifacts": {},
+      "pr": 12195,
+      "last_report_at": "2026-09-22T15:05:35+00:00",
+      "created_at": "2026-09-22T15:05:35+00:00",
+      "closed_at": "2026-09-22T15:05:35+00:00",
+      "orphaned": false,
+      "stale": false,
+      "acceptance_concrete": true,
+      "events": [
+        {
+          "id": "6b8921dcb9e48f86",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_3db49d6f",
+          "kind": "create",
+          "status": null,
+          "text": "Mask the worker key out of every browser payload"
+        },
+        {
+          "id": "96b03329134667b5",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_3db49d6f",
+          "kind": "bind",
+          "status": null,
+          "text": ""
+        },
+        {
+          "id": "12adb742f1290d3a",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_3db49d6f",
+          "kind": "report",
+          "status": "done",
+          "text": "Item field and the bind event's text both masked; whole-payload assertion added."
+        },
+        {
+          "id": "6df1903dccb33f9b",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_3db49d6f",
+          "kind": "verdict",
+          "status": null,
+          "text": "pass"
+        },
+        {
+          "id": "89524daf6f3a9e1c",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_3db49d6f",
+          "kind": "close",
+          "status": null,
+          "text": "Verified against the bar. Accepted."
+        }
+      ],
+      "alive": "closed",
+      "outstanding": false,
+      "terminal": true
+    },
+    {
+      "schema": 1,
+      "item_id": "it_5ab566bb",
+      "title": "Stall sweep for items whose worker went quiet",
+      "acceptance": {
+        "kind": "TBD"
+      },
+      "state": "open",
+      "verdict": null,
+      "decision": "",
+      "round": 0,
+      "fails": 0,
+      "status": null,
+      "summary": "",
+      "artifacts": {},
+      "pr": null,
+      "last_report_at": null,
+      "created_at": "2026-09-22T15:05:35+00:00",
+      "closed_at": null,
+      "orphaned": false,
+      "stale": false,
+      "acceptance_concrete": false,
+      "events": [
+        {
+          "id": "ae5a89d62eaa4c4f",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_5ab566bb",
+          "kind": "create",
+          "status": null,
+          "text": "Stall sweep for items whose worker went quiet"
+        },
+        {
+          "id": "efdda6c2051f1774",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_5ab566bb",
+          "kind": "bind",
+          "status": null,
+          "text": ""
+        }
+      ],
+      "alive": "idle",
+      "outstanding": false,
+      "terminal": false
+    },
+    {
+      "schema": 1,
+      "item_id": "it_905593a9",
+      "title": "Backfill the event log schema version",
+      "acceptance": {
+        "kind": "pr_checks",
+        "pr": 12211,
+        "repo": "kirodotdev/KiroCrew"
+      },
+      "state": "open",
+      "verdict": null,
+      "decision": "",
+      "round": 0,
+      "fails": 0,
+      "status": "blocked",
+      "summary": "Needs the migration in #12180 to land first; nothing here can move until then.",
+      "artifacts": {},
+      "pr": null,
+      "last_report_at": "2026-09-22T15:05:35+00:00",
+      "created_at": "2026-09-22T15:05:35+00:00",
+      "closed_at": null,
+      "orphaned": false,
+      "stale": false,
+      "acceptance_concrete": true,
+      "events": [
+        {
+          "id": "9160454c3e40326e",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_905593a9",
+          "kind": "create",
+          "status": null,
+          "text": "Backfill the event log schema version"
+        },
+        {
+          "id": "16e4782c0897e82b",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_905593a9",
+          "kind": "bind",
+          "status": null,
+          "text": ""
+        },
+        {
+          "id": "fb0d42f0510a93f4",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_905593a9",
+          "kind": "report",
+          "status": "blocked",
+          "text": "Needs the migration in #12180 to land first; nothing here can move until then."
+        }
+      ],
+      "alive": "idle",
+      "outstanding": false,
+      "terminal": false
+    },
+    {
+      "schema": 1,
+      "item_id": "it_d69a37c8",
+      "title": "Crew page item table over the masked projection",
+      "acceptance": {
+        "kind": "pr_checks",
+        "pr": 12208,
+        "repo": "kirodotdev/KiroCrew"
+      },
+      "state": "open",
+      "verdict": null,
+      "decision": "Fold onto the incumbent RFC's Phase 4. Build the item table over the work ledger, not a new session-ledger aggregate.",
+      "round": 2,
+      "fails": 0,
+      "status": "progress",
+      "summary": "Masked projection landed with 31 tests. Page, bands and the 10 s poll are in.",
+      "artifacts": {
+        "branch": "feat/crew-page-work-items",
+        "commit": "a523538a5f"
+      },
+      "pr": 12208,
+      "last_report_at": "2026-09-22T15:05:35+00:00",
+      "created_at": "2026-09-22T15:05:35+00:00",
+      "closed_at": null,
+      "orphaned": false,
+      "stale": false,
+      "acceptance_concrete": true,
+      "events": [
+        {
+          "id": "705b62e4a1607d1a",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_d69a37c8",
+          "kind": "create",
+          "status": null,
+          "text": "Crew page item table over the masked projection"
+        },
+        {
+          "id": "fbe1c6536fa9415a",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_d69a37c8",
+          "kind": "bind",
+          "status": null,
+          "text": ""
+        },
+        {
+          "id": "1c1ec6f7d2e0b91b",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_d69a37c8",
+          "kind": "decision",
+          "status": null,
+          "text": "Fold onto the incumbent RFC's Phase 4. Build the item table over the work ledger, not a new session-ledger aggregate."
+        },
+        {
+          "id": "99cafc073088ea25",
+          "ts": "2026-09-22T15:05:35+00:00",
+          "item_id": "it_d69a37c8",
+          "kind": "report",
+          "status": "progress",
+          "text": "Masked projection landed with 31 tests. Page, bands and the 10 s poll are in."
+        }
+      ],
+      "alive": "running",
+      "outstanding": false,
+      "terminal": false
+    }
+  ],
+  "channels_available": false,
+  "stop_available": true,
+  "take_over_available": false,
+  "take_over_unavailable_code": "no_server_primitive"
+}

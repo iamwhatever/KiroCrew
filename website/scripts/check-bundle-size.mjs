@@ -153,7 +153,21 @@ export const CHUNK_BUDGETS = {
   // ceiling left at 0.04% headroom fails on the next feature's ordinary strings
   // rather than on the new library it exists to catch. Back to the 5% convention
   // over the measured size.
-  t: 905 * KB, // measured 862.2 KB on this branch rebased onto 1c7f963706 (~5% headroom)
+  // Re-measured 2026-09-22: the 5% headroom taken above is spent. On the merge
+  // ref the chunk builds at 905.6 KB against the 905 KB ceiling -- 596 B over,
+  // so main's accumulated catalog copy has consumed all of it and the gate now
+  // fails on ordinary strings again. Fifth recurrence of the drift each note
+  // above describes, same remedy.
+  // Attribution is measured, not assumed: reverting ONLY the 13 files under
+  // `website/src/i18n/locales/` to this branch's merge base and rebuilding drops
+  // the chunk from 910,556 B to 909,180 B, so the delta this branch owns is
+  // 1,376 B -- the crew board's 33 keys of product copy across 12 catalogs plus
+  // the generated `en-XA` pseudo-locale, which roughly doubles the byte cost of
+  // every string. No dependency is added and no lazy `import()` boundary can move
+  // a catalog string out of this chunk, so the only ways to hold the old ceiling
+  // are shipping a page with no translated copy or deleting roughly half its
+  // strings.
+  t: 951 * KB, // measured 905.6 KB on the merge ref (~5% headroom)
 
   // Pierre editor implementation (PR #4072 replaced Monaco, whose
   // 'editor.api2' chunk this entry set used to carry) -- the code-editor

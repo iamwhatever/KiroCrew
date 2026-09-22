@@ -35,7 +35,16 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Collection, Iterator, NamedTuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Collection,
+    Coroutine,
+    Iterator,
+    NamedTuple,
+)
 from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
@@ -2084,6 +2093,62 @@ def _job_from_record(j: dict[str, Any], *, warn_on_coercion: bool = True) -> Cro
     return job
 
 
+async def _manual_run_refused() -> bool:
+    """The coroutine :meth:`CronService.run_job` hands back without a claim.
+
+    ``run_job`` decides synchronously whether the job is already executing; a
+    refused trigger still has to return something the caller can ``await`` or
+    wrap in a task, so it gets this instead of the claimed body.
+    """
+    return False
+
+
+class _RunMarkers:
+    """Cancel / reap markers keyed by job id AND the run they were set for.
+
+    ``cancel()`` and the reaper mark the run whose meta tuple they popped, and
+    a finalizer consumes only a marker set for its own tuple (identity, like
+    every claim fence in :class:`CronService`). Keyed by job id alone, a marker
+    is shared by every run of the job: a finalizer stalled in its executor
+    round trip consumes a replacement run's marker, that run's finalizer then
+    finds none and appends a failure row after the cancelled row ``cancel()``
+    already wrote for it -- and two cancellations landing before either is
+    consumed collapse into one marker, so one of the two runs finalizes as if
+    it had completed. ``__contains__`` answers by job id for callers that only
+    ask whether any run of a job is marked.
+    """
+
+    __slots__ = ("_marks",)
+
+    def __init__(self) -> None:
+        self._marks: dict[str, list[tuple[float, str]]] = {}
+
+    def mark(self, job_id: str, run: tuple[float, str]) -> None:
+        """Set the marker for ``run``; a run already marked is not marked twice."""
+        if not self.has(job_id, run):
+            self._marks.setdefault(job_id, []).append(run)
+
+    def has(self, job_id: str, run: tuple[float, str] | None) -> bool:
+        """Whether ``run`` -- this tuple, not an equal one -- is marked."""
+        return any(mark is run for mark in self._marks.get(job_id, ()))
+
+    def consume(self, job_id: str, run: tuple[float, str] | None) -> bool:
+        """Remove ``run``'s marker, leaving every other run's in place."""
+        marks = self._marks.get(job_id)
+        if not marks:
+            return False
+        for index, mark in enumerate(marks):
+            if mark is run:
+                del marks[index]
+                if not marks:
+                    del self._marks[job_id]
+                return True
+        return False
+
+    def __contains__(self, job_id: object) -> bool:
+        return job_id in self._marks
+
+
 class CronService:
     """Background service for managing and executing scheduled jobs."""
 
@@ -2153,8 +2218,11 @@ class CronService:
         # considers healthy. The epoch map stays for human-facing timestamps
         # (running_since, history, the "ran Ns" log).
         self._job_start_monotonic: dict[str, float] = {}  # job ID → monotonic start
-        self._reaped_jobs: set[str] = set()  # job IDs killed by the reaper
-        self._cancelled_jobs: set[str] = set()  # job IDs cancelled by the user
+        # Runs killed by the reaper / cancelled by the user, keyed by job id AND
+        # the run's meta tuple: the run's own finalizer consumes its marker and
+        # skips the merge + history row its cancel() / reap already wrote.
+        self._reaped_jobs = _RunMarkers()
+        self._cancelled_jobs = _RunMarkers()
         self._job_jitter: dict[str, float] = {}  # job ID → jitter seconds applied
         self._job_run_meta: dict[str, tuple[float, str]] = {}  # job_id → (start_time, trigger)
         # Where the loop-stall breaker looks for crash dumps. None = the data
@@ -2390,8 +2458,12 @@ class CronService:
         # use the active per-run session key if registered;
         # fall back to the stable key for persistent or legacy callers.
         session_key = self.get_active_session_key(job_id) or f"cron:{job_id}"
-        self._reaped_jobs.add(job_id)
         meta = self._job_run_meta.pop(job_id, None)
+        # Mark the run this reap found: its finalizer consumes only its own
+        # marker. No meta means a cancel() or an earlier reap already took the
+        # run and marked it; a second marker would have no run to consume it.
+        if meta is not None:
+            self._reaped_jobs.mark(job_id, meta)
         reap_started_at = meta[0] if meta else time.time() - elapsed
         reap_trigger = meta[1] if meta else "scheduled"
         self._job_start_times.pop(job_id, None)  # prevent repeated reaping
@@ -2588,8 +2660,13 @@ class CronService:
         if job_id not in self._executing:
             return False
         logger.info("Cancel: user-initiated cancellation of cron job %s", job_id)
-        self._cancelled_jobs.add(job_id)
         meta = self._job_run_meta.pop(job_id, None)
+        # Mark the run this cancel found (see _RunMarkers): a marker keyed by
+        # job id alone would be consumed by whichever finalizer of this job
+        # reads it first. No meta means another cancel() or the reaper already
+        # took this run and marked it.
+        if meta is not None:
+            self._cancelled_jobs.mark(job_id, meta)
         started_at = meta[0] if meta else self._job_start_times.get(job_id, time.time())
         trigger = meta[1] if meta else "scheduled"
         elapsed = time.time() - started_at
@@ -4537,16 +4614,62 @@ class CronService:
         """Set the dashboard refresh callback."""
         self._push_refresh = cb
 
-    async def run_job(self, job_id: str) -> bool:
-        """Manually trigger a job via _run_job_isolated (records history)."""
-        # Refresh the store off the loop, then resolve + claim on the loop.
+    def run_job(self, job_id: str) -> Coroutine[Any, Any, bool]:
+        """Manually trigger a job via _run_job_isolated (records history).
+
+        A plain ``def`` that returns the coroutine, on purpose: the claim on the
+        job -- its ``_executing`` entry and its ``(started, "manual")`` run meta
+        -- is taken HERE, synchronously, while the call expression is evaluated.
+        It therefore exists before the caller's ``asyncio.create_task`` has
+        scheduled anything and before the coroutine's first ``await``. The
+        manual-run route stores the task it creates in ``_running_tasks`` and
+        answers 409 "already running" off that entry, while ``cancel()`` reads
+        only ``_executing``: a claim taken only inside the coroutine -- after
+        the offloaded store refresh, up to a full lock spin later -- leaves a
+        window in which Cancel answers "not running" about a run that Run calls
+        "already running", and the run then executes anyway. Loop-only and
+        await-free, so the check-and-claim stays atomic against the due-scan
+        and a concurrent manual trigger; ``_run_claimed_manual`` releases the
+        claim if the store does not hold the job. Every caller awaits or
+        schedules the returned coroutine at once (the route wraps it in a task
+        on the same line); one that dropped it would leave the job claimed.
+        """
+        if job_id in self._executing:
+            return _manual_run_refused()
+        claim = (time.time(), "manual")
+        self._job_run_meta[job_id] = claim
+        self._executing.add(job_id)
+        return self._run_claimed_manual(job_id, claim)
+
+    def _release_manual_claim(self, job_id: str, claim: tuple[float, str]) -> None:
+        """Undo :meth:`run_job`'s claim when no run consumed it, or none will.
+
+        Identity, not equality: ``cancel()`` pops the run meta and discards
+        ``_executing`` when it cancels a parked manual run, and any later manual
+        or scheduled claim installs a NEW meta tuple, so a claim that is not the
+        stored one belongs to someone else and is left alone. Every site that
+        releases a job's run state -- this helper, ``_run_job_isolated``'s
+        finally, the manual wrapper's backstop -- checks the stored meta tuple
+        the same way, so a newer claim is never released by an older run;
+        ``cancel()`` and the reaper release only the run they found, while its
+        ``_executing`` entry still keeps every other claimant out. The cancel
+        and reap markers are keyed by the same tuple (:class:`_RunMarkers`), so
+        a finalizer consumes only the marker set for its own run.
+        """
+        if self._job_run_meta.get(job_id) is claim:
+            self._job_run_meta.pop(job_id, None)
+            self._executing.discard(job_id)
+
+    async def _run_claimed_manual(self, job_id: str, claim: tuple[float, str]) -> bool:
+        """Body of :meth:`run_job`, entered with the claim already taken."""
+        # Refresh the store off the loop, then resolve + spawn on the loop.
         #
         # The locked _sync() + snapshot runs in a worker thread (_synced_snapshot
         # via asyncio.to_thread) so a manual trigger never pays the whole-file
         # read_bytes() + blake2b hash of crons.json on the event loop.
-        # _executing / _job_run_meta are loop-owned, so the find + claim stays
-        # on the loop, with NO await between the snapshot read and the claim so
-        # it is atomic against every other loop task (the timer due-scan).
+        # _executing / _job_run_meta are loop-owned; the claim was taken on the
+        # loop before this coroutine started, so a cancel() that lands while the
+        # refresh is in flight finds the run and cancels THIS task.
         #
         # One residual, benign race remains against the batch-remove worker: it
         # may delete the job on its own thread in the instant between our
@@ -4555,14 +4678,32 @@ class CronService:
         # see it). The batch-remove worker holds the SAME flock, so a lock-held
         # claim could not observe a delete mid-way regardless. Degrades to the
         # in-memory snapshot under lock contention.
-        snapshot = await asyncio.to_thread(self._synced_snapshot, True)
+        try:
+            snapshot = await asyncio.to_thread(self._synced_snapshot, True)
+        except BaseException:
+            # No run will consume the claim: release it unless cancel() already
+            # did (it pops the meta, so the identity check fails) or a newer
+            # claim has replaced it. A cancel() that reached us here also marked
+            # this claim in _cancelled_jobs for _run_job_isolated's finally to
+            # consume -- a finally this run never spawns -- so consume it here,
+            # or the marker would outlive its run.
+            self._release_manual_claim(job_id, claim)
+            self._cancelled_jobs.consume(job_id, claim)
+            raise
+        if self._job_run_meta.get(job_id) is not claim:
+            # cancel() took the claim while the refresh was in flight and is
+            # still tearing down: it pops the run meta first and cancels the
+            # tracked task only after its process-kill / session-reset awaits,
+            # so this coroutine can resume inside that gap. Dispatching here
+            # would start the very run cancel() is about to report cancelled.
+            # The marker cancel() left is keyed to this claim, for a
+            # _run_job_isolated finally that never runs; consume it here.
+            self._cancelled_jobs.consume(job_id, claim)
+            return False
         job = next((j for j in snapshot if j.id == job_id), None)
         if not job:
+            self._release_manual_claim(job_id, claim)
             return False
-        if job.id in self._executing:
-            return False
-        self._job_run_meta[job.id] = (time.time(), "manual")
-        self._executing.add(job.id)
         task = asyncio.create_task(self._run_job_isolated(job))
         self._running_tasks[job.id] = task
         try:
@@ -4571,7 +4712,11 @@ class CronService:
             if not task.cancelled():
                 raise  # outer coroutine was cancelled, propagate
         finally:
-            if task.done():
+            # Backstop for a run whose finally was cut short, idempotent with
+            # it and fenced the same way: the wrapper resumes one loop
+            # iteration after the run ends, and a claim that is not this
+            # wrapper's by then belongs to a replacement run.
+            if task.done() and self._job_run_meta.get(job.id) is claim:
                 self._executing.discard(job.id)
                 self._running_tasks.pop(job.id, None)
         return True
@@ -5030,10 +5175,10 @@ class CronService:
             # The jitter sleep MUST live inside this try: hourly/daily jobs
             # sleep up to 59 min here, and a user cancel() during that window
             # raises CancelledError at the sleep — if that happened BEFORE the
-            # try, the finally below would never run, leaking the
-            # _cancelled_jobs marker (and the rest of the bookkeeping) so the
-            # job's NEXT run would see the stale marker and silently drop its
-            # real result as "cancelled".
+            # try, the finally below would never run, leaking this run's
+            # _cancelled_jobs marker (and the rest of the bookkeeping): the
+            # run-keyed marker stays inert for later runs, but nothing else
+            # would ever consume it.
             if jitter > 0:
                 logger.debug("Cron: applying %.0fs jitter to job '%s'", jitter, job.name)
                 await asyncio.sleep(jitter)
@@ -5062,7 +5207,7 @@ class CronService:
                     self._push_refresh("crons")
             except Exception:
                 logger.debug("push_refresh failed on job start", exc_info=True)
-            await self._execute_with_timeout(job)
+            await self._execute_with_timeout(job, meta)
         except asyncio.CancelledError:
             # stop() cancels this task WITHOUT marking _cancelled_jobs, so the
             # finally must know not to clear the last completed run's result.
@@ -5084,16 +5229,33 @@ class CronService:
                 await asyncio.to_thread(cron_inflight.clear_marker, self._dir, job.id)
             except Exception:
                 logger.debug("in-flight marker not cleared for %s", job.id, exc_info=True)
-            self._job_start_times.pop(job.id, None)
-            self._job_start_monotonic.pop(job.id, None)
-            self._job_jitter.pop(job.id, None)
-            self._job_run_meta.pop(job.id, None)
-            reaped = job.id in self._reaped_jobs
-            self._reaped_jobs.discard(job.id)
-            cancelled = job.id in self._cancelled_jobs
-            self._cancelled_jobs.discard(job.id)
-            self._executing.discard(job.id)
-            self._running_tasks.pop(job.id, None)
+            # Release the job's run state only while the stored claim is still
+            # THIS run's meta tuple (identity, as in _release_manual_claim).
+            # cancel() and the reaper release the run they found before
+            # anything else can claim the job, and the marker clear above is a
+            # full executor round trip: a manual Run accepted in that gap holds
+            # a claim -- meta, start stamps, _executing entry, tracked task --
+            # that is not this run's to remove. Popping it anyway drops that
+            # run at its own claim re-check after the route answered "started",
+            # or, past the re-check, leaves it running with Cancel answering
+            # 409 and a further Run accepted beside it. A run that is still the
+            # claim holder (a normal completion, or stop()'s cancel, which
+            # releases nothing) releases everything here as before.
+            if self._job_run_meta.get(job.id) is meta:
+                self._job_start_times.pop(job.id, None)
+                self._job_start_monotonic.pop(job.id, None)
+                self._job_jitter.pop(job.id, None)
+                self._job_run_meta.pop(job.id, None)
+                self._executing.discard(job.id)
+                self._running_tasks.pop(job.id, None)
+            # Consume only THIS run's markers (identity on its meta tuple).
+            # cancel() and the reaper mark the run they popped; a marker keyed
+            # by job id alone would let this finalizer, stalled in the clear
+            # above while a replacement run was accepted and cancelled, eat
+            # that run's marker -- its finalizer then finds none and appends a
+            # failure row after the cancelled row cancel() already wrote.
+            reaped = self._reaped_jobs.consume(job.id, meta)
+            cancelled = self._cancelled_jobs.consume(job.id, meta)
             # Notify dashboard that the job has finished (clears the badge).
             try:
                 if self._push_refresh:
@@ -5252,8 +5414,16 @@ class CronService:
                 return False
         return True
 
-    async def _execute_with_timeout(self, job: CronJob) -> None:
-        """Execute a job with a timeout guard."""
+    async def _execute_with_timeout(
+        self, job: CronJob, meta: tuple[float, str] | None = None
+    ) -> None:
+        """Execute a job with a timeout guard.
+
+        ``meta`` is the run's own meta tuple, handed down so ``_execute`` can
+        ask whether THIS run was cancelled (the markers are keyed by run, and
+        ``cancel()`` has popped the stored tuple by the time that question is
+        asked); a direct call without one matches no marker.
+        """
         timeout = effective_wake_budget(job)
         # The cron pool's QUEUE WAIT happens inside this deadline, so the wake
         # budget has to cover it as well as the execution.  Excluding queue wait
@@ -5283,7 +5453,7 @@ class CronService:
         # failure and then overran the deadline during cleanup.
         job.failure_recorded = False
         try:
-            await asyncio.wait_for(self._execute(job), timeout=deadline)
+            await asyncio.wait_for(self._execute(job, meta), timeout=deadline)
         except asyncio.TimeoutError:
             # NB: Timeout bypasses _cron_callback's except block entirely —
             # which also means it bypasses all Slack notification logic. Adding
@@ -5320,8 +5490,11 @@ class CronService:
                 job.record_failure()
             logger.error("Cron job '%s' timed out after %ds", job.name, deadline)
 
-    async def _execute(self, job: CronJob) -> None:
-        """Run the job callback and update runtime fields (last_run_ts, last_status)."""
+    async def _execute(self, job: CronJob, meta: tuple[float, str] | None = None) -> None:
+        """Run the job callback and update runtime fields (last_run_ts, last_status).
+
+        ``meta`` is this run's meta tuple (see ``_execute_with_timeout``).
+        """
         logger.info("Cron: executing '%s' (%s)", job.name, job.id)
         # Reset status for this run so a prior run's "error" can't leak into an
         # "ok" decision below. Same for the fire-time denial marker.
@@ -5370,8 +5543,10 @@ class CronService:
                 # cancelled branch returns None without setting last_status,
                 # so a callback returning in that window would otherwise
                 # reach this branch — and cancel() documents that it leaves
-                # consecutive_failures untouched.
-                if job.id not in self._cancelled_jobs:
+                # consecutive_failures untouched. Asked for THIS run's meta:
+                # cancel() has popped the stored tuple by now, and a marker
+                # left by another run of the job is not this run's.
+                if not self._cancelled_jobs.has(job.id, meta):
                     job.record_success()
         except Exception as exc:
             job.last_status = "error"

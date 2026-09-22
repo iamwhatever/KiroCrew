@@ -49,6 +49,7 @@ class TestCronReaper:
         job = _make_job("expired1")
         svc._jobs = [job]
         svc._job_start_times["expired1"] = time.time() - _JOB_TIMEOUT_SECS - 120
+        svc._job_run_meta["expired1"] = (time.time() - _JOB_TIMEOUT_SECS - 120, "scheduled")
         svc._running_tasks["expired1"] = MagicMock(done=MagicMock(return_value=False))
 
         with patch("kiro_crew.sel.sel") as mock_sel, patch.object(svc, "_save"):
@@ -205,7 +206,9 @@ class TestCronReaper:
 
         job = _make_job("reaped1")
         svc._jobs = [job]
-        svc._reaped_jobs.add("reaped1")
+        meta = (time.time(), "scheduled")
+        svc._job_run_meta["reaped1"] = meta
+        svc._reaped_jobs.mark("reaped1", meta)
         svc._executing.add("reaped1")
 
         with patch.object(svc, "_execute_with_timeout", new_callable=AsyncMock), patch.object(
@@ -224,7 +227,9 @@ class TestCronReaper:
 
         job = _make_job("reaped2")
         svc._jobs = [job]
-        svc._reaped_jobs.add("reaped2")
+        meta = (time.time(), "scheduled")
+        svc._job_run_meta["reaped2"] = meta
+        svc._reaped_jobs.mark("reaped2", meta)
         svc._executing.add("reaped2")
 
         with patch.object(
@@ -288,6 +293,7 @@ class TestCronReaper:
 
         job = _make_job("nosess1")
         svc._jobs = [job]
+        svc._job_run_meta["nosess1"] = (time.time() - _JOB_TIMEOUT_SECS - 10, "scheduled")
 
         with patch("kiro_crew.sel.sel"), patch.object(svc, "_save"):
             await svc._force_reap("nosess1", _JOB_TIMEOUT_SECS + 10)
@@ -304,7 +310,7 @@ class TestCronReaper:
 
         start_captured: list[bool] = []
 
-        async def capture_start(j: CronJob) -> None:
+        async def capture_start(j: CronJob, meta: object = None) -> None:
             start_captured.append("track1" in svc._job_start_times)
 
         with patch.object(svc, "_execute_with_timeout", side_effect=capture_start), patch.object(
@@ -385,6 +391,7 @@ class TestCronReaper:
         job.timeout_secs = 5400
         svc._jobs = [job]
         svc._job_start_times["custom2"] = time.time() - 5500
+        svc._job_run_meta["custom2"] = (time.time() - 5500, "scheduled")
         svc._running_tasks["custom2"] = MagicMock(done=MagicMock(return_value=False))
 
         with patch("kiro_crew.sel.sel"), patch.object(svc, "_save"), patch(
@@ -427,6 +434,7 @@ class TestCronReaper:
         job.timeout_secs = 100000  # exceeds 86400 cap
         svc._jobs = [job]
         svc._job_start_times["cap1"] = time.time() - 86500
+        svc._job_run_meta["cap1"] = (time.time() - 86500, "scheduled")
         svc._running_tasks["cap1"] = MagicMock(done=MagicMock(return_value=False))
 
         with patch("kiro_crew.sel.sel"), patch.object(svc, "_save"), patch(
@@ -448,6 +456,7 @@ class TestCronReaper:
         # No job in self._jobs, but start time still tracked (race: job removed while running)
         svc._jobs = []
         svc._job_start_times["ghost1"] = time.time() - _JOB_TIMEOUT_SECS - 60
+        svc._job_run_meta["ghost1"] = (time.time() - _JOB_TIMEOUT_SECS - 60, "scheduled")
         svc._running_tasks["ghost1"] = MagicMock(done=MagicMock(return_value=False))
 
         with patch("kiro_crew.sel.sel"), patch.object(svc, "_save"), patch(
@@ -523,7 +532,7 @@ class TestReaperMonotonicDeadline:
 
         seen: list[bool] = []
 
-        async def capture(j: CronJob) -> None:
+        async def capture(j: CronJob, meta: object = None) -> None:
             seen.append("mono1" in svc._job_start_monotonic)
 
         with patch.object(svc, "_merge_job_result"):
@@ -581,6 +590,7 @@ class TestReaperMonotonicDeadline:
         job = _make_job("legacy1")
         svc._jobs = [job]
         svc._job_start_times["legacy1"] = time.time() - _JOB_TIMEOUT_SECS - 60
+        svc._job_run_meta["legacy1"] = (time.time() - _JOB_TIMEOUT_SECS - 60, "scheduled")
         svc._running_tasks["legacy1"] = MagicMock(done=MagicMock(return_value=False))
         assert "legacy1" not in svc._job_start_monotonic
 

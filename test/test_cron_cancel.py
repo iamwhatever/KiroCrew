@@ -151,7 +151,9 @@ class TestCronServiceCancel:
         svc._history = CronHistoryStore(base_dir=tmp_path)
         job = _make_job("run3")
         svc._jobs = [job]
-        svc._cancelled_jobs.add("run3")
+        meta = (time.time(), "manual")
+        svc._job_run_meta["run3"] = meta
+        svc._cancelled_jobs.mark("run3", meta)
 
         with patch.object(svc, "_merge_job_result") as mock_merge:
             await svc._run_job_isolated(job)

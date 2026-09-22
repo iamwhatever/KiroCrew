@@ -9,6 +9,7 @@ import { sseStatus, sseYolo, sseConnected, sseDisconnected, sseSlots, sseTodoUpd
 import { addNotification, ackNotificationByTs, unackNotificationByTs, removeNotificationByTs, clearAllNotifications, fetchNotifications, markBootNotificationsFetched } from '../store/notificationsSlice'
 import { dispatchMcNotification, dispatchLiveNotification, TURN_DONE_KIND, APPROVAL_KIND, shouldChimeOnTurnDone } from './notificationEvent'
 import { shouldNotifyOnChatComplete } from './chatCompleteNotify'
+import { nativeNotificationPermitted, postNativeNotification } from '../lib/nativeNotify'
 import { isChatPath } from './notificationBanner'
 import { emitThemeSound } from './themeSound'
 import { streamingFlushHoldMs } from '../lib/streamHold'
@@ -1675,16 +1676,14 @@ export function useWebSocket() {
             if (!reconnectingRef.current) {
               dispatchMcNotification(APPROVAL_KIND)
             }
-            // Browser notification when tab not focused (permission must be granted via UI interaction elsewhere)
-            if (typeof Notification !== 'undefined' && document.hidden && Notification.permission === 'granted') {
-              // Android Chrome throws "Illegal constructor" for page-context
-              // Notification; an uncaught throw here kills the whole message
-              // handler, so the native toast is best-effort.
-              try {
-                new Notification(i18nT('hooks.useWebSocket.approval_required'), { body: data.tool || i18nT('hooks.useWebSocket.a_task_needs_your_decision'), silent: true, tag: 'kirocrew-approval' })
-              } catch {
-                /* unsupported platform */
-              }
+            // Browser notification when tab not focused (permission must be granted via UI interaction elsewhere).
+            // In an embedded instance pane the helper relays to the parent frame,
+            // which holds the grant; the pane's own permission is denied by design.
+            if (document.hidden && nativeNotificationPermitted()) {
+              // Best-effort: Android Chrome throws "Illegal constructor" for a
+              // page-context Notification; the helper swallows it so the rest of
+              // this message handler still runs.
+              postNativeNotification(i18nT('hooks.useWebSocket.approval_required'), { body: data.tool || i18nT('hooks.useWebSocket.a_task_needs_your_decision'), silent: true, tag: 'kirocrew-approval' })
             }
             dispatch(addNotification({
               kind: 'approval',
@@ -2405,14 +2404,10 @@ export function useWebSocket() {
               const doneBody = completionNeedsInput
                 ? i18nT('hooks.useWebSocket.waiting_for_input')
                 : i18nT('hooks.useWebSocket.response_ready')
-              // Android Chrome throws "Illegal constructor" for page-context
-              // Notification; an uncaught throw here kills the whole message
-              // handler, so the native toast is best-effort (same as approval).
-              try {
-                new Notification(doneTitle, { body: doneBody, tag: `kirocrew-chat-done:${doneSlot}`, silent: questionPending })
-              } catch {
-                /* unsupported platform */
-              }
+              // Best-effort (same as approval): the helper swallows Android
+              // Chrome's "Illegal constructor" and relays to the parent frame
+              // when this dashboard is an embedded instance pane.
+              postNativeNotification(doneTitle, { body: doneBody, tag: `kirocrew-chat-done:${doneSlot}`, silent: questionPending })
             }
             if (data.slot && !isSlotOnScreen(data.slot) && !reconnectingRef.current) {
               dispatch(markSlotUnread({ slot: data.slot, ts: (data as { ts?: string }).ts || undefined }))

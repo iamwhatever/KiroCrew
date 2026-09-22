@@ -13,6 +13,7 @@
  * Settings > Notifications.
  */
 import { safeGetItem, safeSetItem } from '../utils/safeStorage'
+import { nativeNotificationPermitted } from '../lib/nativeNotify'
 
 /** localStorage key holding the opt-in. Absent — or anything but `'1'` —
  *  means off, so a corrupt or half-written value degrades to the default
@@ -57,7 +58,10 @@ export function saveChatCompleteNotify(on: boolean): void {
  *
  * The capability checks (`Notification` present, permission granted) live here
  * rather than at the call site so the whole gate is one testable predicate; the
- * caller is left with the construction the platform may still refuse.
+ * caller is left with the construction the platform may still refuse. In an
+ * embedded instance pane the permission is denied by design and the parent
+ * frame posts on the pane's behalf, so the capability check defers to
+ * `nativeNotificationPermitted()` rather than reading the pane's own verdict.
  */
 export function shouldNotifyOnChatComplete(opts: {
   slot: string | undefined | null
@@ -65,7 +69,7 @@ export function shouldNotifyOnChatComplete(opts: {
 }): boolean {
   if (!opts.slot || opts.reconnecting) return false
   if (!loadChatCompleteNotify()) return false
-  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false
+  if (!nativeNotificationPermitted()) return false
   // "Away" needs both axes: `hidden` covers minimized / another virtual desktop
   // / a background tab, while `hasFocus()` covers a window that is fully
   // visible but sitting behind another application.

@@ -104,6 +104,25 @@ export function remapCarriedBlocks(
   return { text: out, blocks }
 }
 
+/**
+ * Bring the blocks behind a payload being handed back (`carried`, the ones its
+ * tokens in `text` point at) into a composer that already holds `kept` blocks.
+ *
+ * The one owner of the recovery rule every composer host applies: a carried
+ * block the composer already holds (same id — the clear had not flushed when
+ * the payload was captured) is not added twice, and the rest go through
+ * {@link remapCarriedBlocks} so a colliding `seq` gets a fresh number and its
+ * token in `text` is rewritten. Returns the text to merge and the full block
+ * list to install (kept first, then the carried ones).
+ */
+export function carryPastes(text: string, carried: PasteBlock[], kept: PasteBlock[]): { text: string; pastes: PasteBlock[] } {
+  if (!carried.length) return { text, pastes: kept }
+  const keptIds = new Set(kept.map(b => b.id))
+  const fresh = carried.filter(b => !keptIds.has(b.id))
+  const { text: remapped, blocks } = remapCarriedBlocks(text, fresh, new Set(kept.map(b => b.seq)))
+  return { text: remapped, pastes: [...kept, ...blocks] }
+}
+
 /** Ranges for each token whose seq is present in `blocks`, in document order. */
 export function findTokenRanges(
   text: string,

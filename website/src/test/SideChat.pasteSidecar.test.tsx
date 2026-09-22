@@ -15,7 +15,7 @@ import { screen, fireEvent, waitFor, act } from '@testing-library/react'
 import reducer from '../store/chatSlice'
 import dashboardReducer from '../store/dashboardSlice'
 import { renderWithProviders, createTestStore } from './helpers'
-import { clearSideChatDrafts, readSideChatDraft, readSideChatPastes } from '../chat-core/composer/sideChatDrafts'
+import { clearSideChatDrafts, readSideChatDraft } from '../chat-core/composer/sideChatDrafts'
 
 const dashInitial = { ...dashboardReducer(undefined, { type: '@@INIT' }), connected: true }
 
@@ -103,7 +103,6 @@ describe('SideChat paste sidecar', () => {
     // The pill: the composer holds the token, not the pasted lines.
     await waitFor(() => expect(box().value).toMatch(TOKEN))
     expect(box().value).not.toContain('gamma')
-    expect(readSideChatPastes(SLOT)).toEqual([expect.objectContaining({ seq: 1, lines: 5, content: PASTED })])
 
     fireEvent.keyDown(box(), { key: 'Enter' })
     await waitFor(() => expect(sideTurn).toHaveBeenCalledTimes(1))
@@ -112,10 +111,12 @@ describe('SideChat paste sidecar', () => {
     expect(question).toContain(PASTED)
     expect(question).not.toMatch(TOKEN)
     expect(question.startsWith('what does this mean')).toBe(true)
-    // Composer, draft store and blocks are all clear.
+    // Composer and draft store are clear, and so are the blocks: the next
+    // paste numbers from #1 again (a surviving block would make it #2).
     await waitFor(() => expect(box().value).toBe(''))
     expect(readSideChatDraft(SLOT)).toBe('')
-    expect(readSideChatPastes(SLOT)).toEqual([])
+    await pasteInto(box(), PASTED)
+    await waitFor(() => expect(box().value).toMatch(TOKEN))
   })
 
   it('expands on the steer branch too', async () => {
@@ -129,7 +130,6 @@ describe('SideChat paste sidecar', () => {
     expect(question).toContain(PASTED)
     expect(question).not.toMatch(TOKEN)
     await waitFor(() => expect(box().value).toBe(''))
-    expect(readSideChatPastes(SLOT)).toEqual([])
   })
 
   it('keeps the blocks with the draft across a remount, so the token still expands', async () => {
@@ -140,7 +140,6 @@ describe('SideChat paste sidecar', () => {
     // store is what survives it.
     first.unmount()
     expect(readSideChatDraft(SLOT)).toMatch(TOKEN)
-    expect(readSideChatPastes(SLOT)).toHaveLength(1)
 
     mount()
     await waitFor(() => expect(box().value).toMatch(TOKEN))
@@ -151,14 +150,32 @@ describe('SideChat paste sidecar', () => {
     expect(question).not.toMatch(TOKEN)
   })
 
+  it('says the collapsed paste is counted when the expanded question is too long', async () => {
+    // The composer shows one line and a pill; the byte limit is measured on
+    // what the server would receive, so the message has to name the paste or
+    // "yours: 32,769" reads as nonsense against a nearly empty box.
+    mount()
+    fireEvent.change(box(), { target: { value: 'x ' } })
+    await pasteInto(box(), Array.from({ length: 33 }, () => 'a'.repeat(1_000)).join('\n'))
+    await waitFor(() => expect(box().value).toMatch(/\[ Paste #1 · 33 lines \]/))
+    fireEvent.keyDown(box(), { key: 'Enter' })
+    await waitFor(() => expect(screen.getByText(/Question too long — reduce to under ~32,768 characters \(yours: 33,03\d, counting the collapsed paste\)/)).toBeInTheDocument())
+    expect(sideTurn).not.toHaveBeenCalled()
+    // Nothing was consumed: the pill is still there for the user to remove.
+    expect(box().value).toMatch(/\[ Paste #1 · 33 lines \]/)
+  })
+
   it('drops a block whose token the user deleted as text', async () => {
     mount()
     await pasteInto(box(), PASTED)
     await waitFor(() => expect(box().value).toMatch(TOKEN))
-    fireEvent.change(box(), { target: { value: 'typed over it' } })
-    await waitFor(() => expect(readSideChatPastes(SLOT)).toEqual([]))
+    fireEvent.change(box(), { target: { value: 'typed over it ' } })
+    // The block went with its token: a fresh paste numbers from #1 again (a
+    // surviving block would make it #2), and the send carries only this one.
+    await pasteInto(box(), 'one\ntwo\nthree\nfour')
+    await waitFor(() => expect(box().value).toMatch(/\[ Paste #1 · 4 lines \]/))
     fireEvent.keyDown(box(), { key: 'Enter' })
     await waitFor(() => expect(sideTurn).toHaveBeenCalledTimes(1))
-    expect(sideTurn.mock.calls[0][1]).toBe('typed over it')
+    expect(sideTurn.mock.calls[0][1]).toBe('typed over it \none\ntwo\nthree\nfour')
   })
 })

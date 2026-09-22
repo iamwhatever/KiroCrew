@@ -110,7 +110,7 @@ import TurnNavigationMinimap from './chat/TurnNavigationMinimap'
 import { useVirtualChat } from '../hooks/virtualizer/useVirtualChat'
 import { addPendingFile, prepareSendPayload, buildRelMap, hasExactRelMention, normalizeWindowsPath, parseDirTokens, serializeDirTokens, spliceDirTokens } from '../utils/fileTokens'
 import { makeRelative } from '../components/FilePickerMenu'
-import { type PasteBlock, expandAll as expandPasteTokens, pruneBlocks as pruneBlocksUtil, remapCarriedBlocks, saveStoredPaste } from '../utils/pasteTokens'
+import { type PasteBlock, carryPastes, expandAll as expandPasteTokens, pruneBlocks as pruneBlocksUtil, saveStoredPaste } from '../utils/pasteTokens'
 import { extractPromptFromToken, extractSlackContextFromToken } from '../utils/tokenPrompt'
 /** Map message index → displayItems index, for scroll-to-match and the turn minimap. */
 function buildMessageToDisplayIdx(items: DisplayItem[]): Map<number, number> {
@@ -2580,18 +2580,13 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
         const keepRefs = onScreen ? pendingSessionsRef.current : (uiSlot ? sessionRefDrafts.current[uiSlot] ?? [] : [])
         const restoredRefs = mergeSessionRefs(keepRefs, sentSessionRefs)
         const keepPastes = onScreen ? pasteBlocksRef.current : (uiSlot ? pasteDrafts.current[uiSlot] ?? [] : [])
-        const keptPasteIds = new Set(keepPastes.map(b => b.id))
         // Collapsed pastes resolve by `seq`, not id, and a paste made while the
         // composer was empty restarts at #1 — so a naive id-merge can leave two
         // blocks sharing #1, with both markers resolving to one of them and
-        // silently swapping the user's content on retry. Re-sequence the carried
-        // blocks past the kept ones and rewrite their markers in the payload text.
-        const { text: payload, blocks: carriedPastes } = remapCarriedBlocks(
-          raw,
-          activePastes.filter(x => !keptPasteIds.has(x.id)),
-          new Set(keepPastes.map(b => b.seq)),
-        )
-        const restoredPastes = [...keepPastes, ...carriedPastes]
+        // silently swapping the user's content on retry. `carryPastes` owns the
+        // rule: re-sequence the carried blocks past the kept ones and rewrite
+        // their markers in the payload text.
+        const { text: payload, pastes: restoredPastes } = carryPastes(raw, activePastes, keepPastes)
         const keepText = onScreen ? inputRef.current : (uiSlot ? drafts.current[uiSlot] ?? '' : '')
         // Keep whatever the user typed while the create was in flight and append
         // the payload after it, without duplicating one the composer already
@@ -2769,13 +2764,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       // blocks cannot claim one `[ Paste #N ]` marker.
       const keepText = onScreenNow ? inputRef.current : (drafts.current[slot] ?? '')
       const keepPastes = onScreenNow ? pasteBlocksRef.current : (pasteDrafts.current[slot] ?? [])
-      const keptIds = new Set(keepPastes.map(b => b.id))
-      const { text: carriedText, blocks: carriedPastes } = remapCarriedBlocks(
-        typedTxt,
-        activePastes.filter(b => !keptIds.has(b.id)),
-        new Set(keepPastes.map(b => b.seq)),
-      )
-      const pastesBack = [...keepPastes, ...carriedPastes]
+      const { text: carriedText, pastes: pastesBack } = carryPastes(typedTxt, activePastes, keepPastes)
       // Same merge rule as the create-failure path above, and the separator lives
       // in `mergeRecoveredDraft` rather than in a template literal here: the blank
       // line between the kept draft and the recovered payload is message

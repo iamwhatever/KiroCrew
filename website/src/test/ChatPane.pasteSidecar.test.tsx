@@ -178,6 +178,37 @@ describe('ChatPane paste sidecar', () => {
     expect(wireText).not.toMatch(TOKEN)
   })
 
+  it('two refused paste sends landing in one batch both come back, each with its own block', async () => {
+    // Two sends in flight, both refused, both receipts resolved inside one act:
+    // React batches the two recoveries into one commit. Each carries against
+    // the blocks the previous one installed (the ref is advanced per
+    // recovery), so both tokens keep their content and the retry sends both.
+    const settle: Array<(v: unknown) => void> = []
+    vi.mocked(api.sendChat).mockImplementation(() => new Promise(resolve => { settle.push(resolve) }) as never)
+    const SECOND = 'aa\nbb\ncc\ndd'
+    renderPane('pane-batch')
+    const box = await composer()
+    await pasteInto(box, PASTED)
+    await waitFor(() => expect(box.value).toMatch(TOKEN))
+    fireEvent.keyDown(box, { key: 'Enter', code: 'Enter' })
+    await waitFor(() => expect(box.value).toBe(''))
+    await pasteInto(box, SECOND)
+    await waitFor(() => expect(box.value).toMatch(/\[ Paste #1 · 4 lines \]/))
+    fireEvent.keyDown(box, { key: 'Enter', code: 'Enter' })
+    await waitFor(() => expect(settle).toHaveLength(2))
+    const refused = { ok: false, json: () => Promise.resolve({ ok: false, error: 'refused' }) }
+    await act(async () => { settle[0](refused); settle[1](refused) })
+    // Both tokens are back, re-numbered apart (two blocks cannot share #1).
+    await waitFor(() => expect(box.value).toMatch(/\[ Paste #1 · \d lines \][\s\S]*\[ Paste #2 · \d lines \]/))
+    vi.mocked(api.sendChat).mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: true }) } as never)
+    fireEvent.keyDown(box, { key: 'Enter', code: 'Enter' })
+    await waitFor(() => expect(api.sendChat).toHaveBeenCalledTimes(3))
+    const [retryText] = vi.mocked(api.sendChat).mock.calls[2]
+    expect(retryText).toContain(PASTED)
+    expect(retryText).toContain(SECOND)
+    expect(retryText).not.toMatch(/\[ Paste #\d/)
+  })
+
   it('hands the blocks back with the text when the server refuses the send', async () => {
     vi.mocked(api.sendChat).mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ ok: false, error: 'refused' }) } as never)
     renderPane('pane-refused')

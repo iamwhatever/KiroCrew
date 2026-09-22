@@ -78,10 +78,6 @@ export function writeSideChatDraft(slot: string, text: string): void {
   set(slot, { text, seedTick: cur.seedTick, pastes: pruneBlocks(text, cur.pastes) })
 }
 
-export function readSideChatPastes(slot: string): PasteBlock[] {
-  return entry(slot).pastes
-}
-
 /** Replace the slot's paste blocks — the composer's `onPasteBlocksChange`. */
 export function writeSideChatPastes(slot: string, pastes: PasteBlock[]): void {
   const cur = entry(slot)

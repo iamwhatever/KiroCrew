@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { readPaneDraft, writePaneDraft, takePaneDraft, mergePaneDraft, subscribePaneDraft, carryPastes, PANE_DRAFTS_KEY, PANE_PASTE_DRAFTS_KEY, __resetPaneDraftsForTests } from '../utils/chatPaneDrafts'
-import type { PasteBlock } from '../utils/pasteTokens'
+import { readPaneDraft, writePaneDraft, takePaneDraft, mergePaneDraft, subscribePaneDraft, PANE_DRAFTS_KEY, LEGACY_PANE_FILE_DRAFTS_KEY, PANE_DRAFTS_MAX_BYTES, __resetPaneDraftsForTests } from '../utils/chatPaneDrafts'
+import { carryPastes, type PasteBlock } from '../utils/pasteTokens'
 
 /* The pane's parked drafts must survive the storage layer refusing a write:
  * a quota that ChatPage's own 2 MiB stores may already have filled, or a
@@ -29,13 +29,132 @@ describe('chatPaneDrafts', () => {
     expect(localStorage.getItem(PANE_DRAFTS_KEY)).toBeNull()
   })
 
-  it('parks the paste blocks with the text, in sessionStorage as well, and takes them back', () => {
+  it('parks text, files and paste blocks as ONE stored value and takes them back together', () => {
     const b = block(1, 'l1\nl2\nl3')
     writePaneDraft('a', { text: '[ Paste #1 · 3 lines ]', files: [], pastes: [b] })
-    expect(sessionStorage.getItem(PANE_PASTE_DRAFTS_KEY)).toContain('l1\\nl2\\nl3')
-    expect(localStorage.getItem(PANE_PASTE_DRAFTS_KEY)).toBeNull()
+    const stored = JSON.parse(sessionStorage.getItem(PANE_DRAFTS_KEY) ?? '{}') as Record<string, { text: string; pastes: PasteBlock[] }>
+    expect(stored.a.text).toBe('[ Paste #1 · 3 lines ]')
+    expect(stored.a.pastes).toEqual([b])
     expect(takePaneDraft('a')).toEqual({ text: '[ Paste #1 · 3 lines ]', files: [], pastes: [b] })
     expect(readPaneDraft('a')).toEqual({ text: '', files: [], pastes: [] })
+  })
+
+  it('evicts an over-budget slot WHOLE from storage: never a token without its block', () => {
+    // Two parked slots; the second is big enough to push the blob past the cap.
+    // The store evicts the OLDEST slot entirely, so what a reload (mirror gone)
+    // finds in storage is slot a either whole or absent — the token can never
+    // come back alone. The newest slot is never the casualty.
+    const small = block(1, 'a\nb\nc')
+    writePaneDraft('a', { text: 'keep [ Paste #1 · 3 lines ]', files: [], pastes: [small] })
+    const huge = block(1, 'x'.repeat(PANE_DRAFTS_MAX_BYTES))
+    writePaneDraft('b', { text: '[ Paste #1 · 1 lines ]', files: [], pastes: [huge] })
+    const stored = JSON.parse(sessionStorage.getItem(PANE_DRAFTS_KEY) ?? '{}') as Record<string, { text: string; pastes: PasteBlock[] }>
+    expect(stored.a).toBeUndefined()
+    expect(stored.b.text).toBe('[ Paste #1 · 1 lines ]')
+    expect(stored.b.pastes).toEqual([huge])
+    // The tab that parked it still has slot a whole, from the mirror.
+    expect(readPaneDraft('a')).toEqual({ text: 'keep [ Paste #1 · 3 lines ]', files: [], pastes: [small] })
+  })
+
+  it('folds drafts parked by the two-store layout into whole drafts on first read', () => {
+    // A tab that parked under the old layout (a text string per slot, paths
+    // under their own key) and then reloaded into this code gets its drafts
+    // back; a slot that already has a whole draft keeps it.
+    sessionStorage.setItem(PANE_DRAFTS_KEY, JSON.stringify({ a: 'text only from an older build', b: { text: 'fine', files: [], pastes: [] }, c: 'stale for c' }))
+    sessionStorage.setItem(LEGACY_PANE_FILE_DRAFTS_KEY, JSON.stringify({ a: ['/tmp/a.png'], d: ['/tmp/d.pdf'], c: 'not a list' }))
+    expect(readPaneDraft('a')).toEqual({ text: 'text only from an older build', files: ['/tmp/a.png'], pastes: [] })
+    expect(readPaneDraft('b')).toEqual({ text: 'fine', files: [], pastes: [] })
+    expect(readPaneDraft('c')).toEqual({ text: 'stale for c', files: [], pastes: [] })
+    expect(readPaneDraft('d')).toEqual({ text: '', files: ['/tmp/d.pdf'], pastes: [] })
+    // Folded once: the legacy key is gone and the unified blob holds the drafts.
+    expect(sessionStorage.getItem(LEGACY_PANE_FILE_DRAFTS_KEY)).toBeNull()
+    const stored = JSON.parse(sessionStorage.getItem(PANE_DRAFTS_KEY) ?? '{}') as Record<string, { text: string }>
+    expect(stored.a.text).toBe('text only from an older build')
+    expect(stored.d).toBeTruthy()
+  })
+
+  it('keeps the legacy path copy when the unified write is refused, and still hands the draft back', () => {
+    sessionStorage.setItem(PANE_DRAFTS_KEY, JSON.stringify({ a: 'old text' }))
+    sessionStorage.setItem(LEGACY_PANE_FILE_DRAFTS_KEY, JSON.stringify({ a: ['/tmp/a.png'] }))
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('quota', 'QuotaExceededError') })
+    // This tab gets the folded draft from the mirror…
+    expect(readPaneDraft('a')).toEqual({ text: 'old text', files: ['/tmp/a.png'], pastes: [] })
+    // …and the only on-disk copy of the paths is untouched for the next load.
+    expect(sessionStorage.getItem(LEGACY_PANE_FILE_DRAFTS_KEY)).toBe(JSON.stringify({ a: ['/tmp/a.png'] }))
+    expect(sessionStorage.getItem(PANE_DRAFTS_KEY)).toBe(JSON.stringify({ a: 'old text' }))
+  })
+
+  it('retries a refused fold: the next write that lands carries the legacy drafts, then the legacy key goes', () => {
+    sessionStorage.setItem(PANE_DRAFTS_KEY, JSON.stringify({ a: 'old text' }))
+    sessionStorage.setItem(LEGACY_PANE_FILE_DRAFTS_KEY, JSON.stringify({ a: ['/tmp/a.png'] }))
+    const refuse = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('quota', 'QuotaExceededError') })
+    expect(readPaneDraft('a').text).toBe('old text')
+    // Storage recovers; a park for ANOTHER slot must not replace the legacy
+    // text blob with a unified one that lacks slot a.
+    refuse.mockRestore()
+    writePaneDraft('b', { text: 'for b', files: [], pastes: [] })
+    const stored = JSON.parse(sessionStorage.getItem(PANE_DRAFTS_KEY) ?? '{}') as Record<string, { text: string; files: string[] }>
+    expect(stored.a).toEqual({ text: 'old text', files: ['/tmp/a.png'], pastes: [] })
+    expect(stored.b.text).toBe('for b')
+    // The fold is now complete on disk: the next access retires the legacy key.
+    readPaneDraft('b')
+    expect(sessionStorage.getItem(LEGACY_PANE_FILE_DRAFTS_KEY)).toBeNull()
+    // A cold read (mirror gone) gets slot a whole.
+    __resetPaneDraftsForTests.call(null)
+    sessionStorage.setItem(PANE_DRAFTS_KEY, JSON.stringify(stored))
+    expect(readPaneDraft('a')).toEqual({ text: 'old text', files: ['/tmp/a.png'], pastes: [] })
+  })
+
+  it('a malformed legacy path blob costs only the paths, never the text drafts beside it', () => {
+    sessionStorage.setItem(PANE_DRAFTS_KEY, JSON.stringify({ a: 'old text' }))
+    sessionStorage.setItem(LEGACY_PANE_FILE_DRAFTS_KEY, '{not json')
+    expect(readPaneDraft('a')).toEqual({ text: 'old text', files: [], pastes: [] })
+    expect(sessionStorage.getItem(LEGACY_PANE_FILE_DRAFTS_KEY)).toBeNull()
+    // And the other way round: an unreadable text blob still yields the paths.
+    __resetPaneDraftsForTests.call(null)
+    sessionStorage.setItem(PANE_DRAFTS_KEY, '[oops')
+    sessionStorage.setItem(LEGACY_PANE_FILE_DRAFTS_KEY, JSON.stringify({ b: ['/tmp/b.pdf'] }))
+    expect(readPaneDraft('b')).toEqual({ text: '', files: ['/tmp/b.pdf'], pastes: [] })
+  })
+
+  it('a taken legacy draft stays consumed while the unified write keeps being refused', () => {
+    sessionStorage.setItem(PANE_DRAFTS_KEY, JSON.stringify({ a: 'old text' }))
+    sessionStorage.setItem(LEGACY_PANE_FILE_DRAFTS_KEY, JSON.stringify({ a: ['/tmp/a.png'] }))
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('quota', 'QuotaExceededError') })
+    // The pane shows slot a: take consumes the parked draft.
+    expect(takePaneDraft('a')).toEqual({ text: 'old text', files: ['/tmp/a.png'], pastes: [] })
+    // The legacy blob is still on disk (nothing could be written), but a re-fold
+    // must not resurrect what the tab has consumed.
+    expect(readPaneDraft('a')).toEqual({ text: '', files: [], pastes: [] })
+    writePaneDraft('b', { text: 'for b', files: [], pastes: [] })
+    expect(readPaneDraft('a')).toEqual({ text: '', files: [], pastes: [] })
+    expect(readPaneDraft('b').text).toBe('for b')
+  })
+
+  it('never retires the legacy path blob on a refused write, even once every legacy slot was parked over', () => {
+    sessionStorage.setItem(PANE_DRAFTS_KEY, JSON.stringify({ a: 'old text' }))
+    sessionStorage.setItem(LEGACY_PANE_FILE_DRAFTS_KEY, JSON.stringify({ a: ['/tmp/a.png'] }))
+    const refuse = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('quota', 'QuotaExceededError') })
+    // The pane parks a NEW draft over slot a while storage refuses: the fold now
+    // has nothing left to add for a, but nothing unified is on disk either.
+    writePaneDraft('a', { text: 'newer text', files: ['/tmp/new.pdf'], pastes: [] })
+    readPaneDraft('b')
+    expect(sessionStorage.getItem(LEGACY_PANE_FILE_DRAFTS_KEY)).toBe(JSON.stringify({ a: ['/tmp/a.png'] }))
+    // Storage recovers: the first access writes the tab's drafts as one unified
+    // blob, and only then does the legacy path blob go.
+    refuse.mockRestore()
+    expect(readPaneDraft('a')).toEqual({ text: 'newer text', files: ['/tmp/new.pdf'], pastes: [] })
+    const stored = JSON.parse(sessionStorage.getItem(PANE_DRAFTS_KEY) ?? '{}') as Record<string, { text: string; files: string[] }>
+    expect(stored.a).toEqual({ text: 'newer text', files: ['/tmp/new.pdf'], pastes: [] })
+    expect(sessionStorage.getItem(LEGACY_PANE_FILE_DRAFTS_KEY)).toBeNull()
+  })
+
+  it('drops a stored value that is neither a whole draft nor a legacy string', () => {
+    sessionStorage.setItem(PANE_DRAFTS_KEY, JSON.stringify({ a: 42, b: { text: 7 }, c: { text: 'fine', files: 'nope', pastes: [{ id: 'x' }] } }))
+    expect(readPaneDraft('a')).toEqual({ text: '', files: [], pastes: [] })
+    expect(readPaneDraft('b')).toEqual({ text: '', files: [], pastes: [] })
+    // Malformed members are dropped, the rest of the draft kept.
+    expect(readPaneDraft('c')).toEqual({ text: 'fine', files: [], pastes: [] })
   })
 
   it('hands the draft back from the mirror when storage refuses the write', () => {

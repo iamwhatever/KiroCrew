@@ -597,7 +597,10 @@ export default function SideChat({ slot }: { slot: string }) {
       const chars = [...q].length
       const bytes = draftByteSize(q)
       const max = Math.floor((chars * MAX_QUESTION_BYTES) / bytes)
-      setLocalError(i18nT('pages.chat.sideChat.question_too_long', {
+      // The count is of the EXPANDED text, so when a collapsed paste is part of
+      // it the message says so: the composer visibly holds one line and a pill,
+      // and a bare "yours: 12,000" against that would read as nonsense.
+      setLocalError(i18nT(blocks.length ? 'pages.chat.sideChat.question_too_long_with_paste' : 'pages.chat.sideChat.question_too_long', {
         max: fmtNumber(max),
         current: fmtNumber(chars),
       }))

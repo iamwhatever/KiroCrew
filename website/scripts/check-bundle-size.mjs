@@ -153,7 +153,13 @@ export const CHUNK_BUDGETS = {
   // ceiling left at 0.04% headroom fails on the next feature's ordinary strings
   // rather than on the new library it exists to catch. Back to the 5% convention
   // over the measured size.
-  t: 905 * KB, // measured 862.2 KB on this branch rebased onto 1c7f963706 (~5% headroom)
+  // Since that measurement main's own catalog growth spent the headroom down to
+  // 0.04% again, and the crewmate opt-in step's 16 keys across 12 catalogs
+  // (about 5 KB) are what tips it: the chunk measures 927,065 B (905.3 KB) on
+  // this branch rebased onto cc385211d8. No dependency was added and no lazy
+  // boundary can move a catalog string out of this chunk, so the ceiling goes
+  // back to the ~5% convention over the measured size.
+  t: 950 * KB, // measured 927,065 B (905.3 KB) on this branch rebased onto cc385211d8 (~4.9% headroom)
 
   // Pierre editor implementation (PR #4072 replaced Monaco, whose
   // 'editor.api2' chunk this entry set used to carry) -- the code-editor

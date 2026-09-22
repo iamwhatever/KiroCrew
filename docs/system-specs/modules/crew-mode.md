@@ -38,7 +38,8 @@ Missing history must never silently turn a private topic into Global memory.
 | `src/kiro_crew/dashboard/handlers/agent_catalog.py` | Read-only `/api/agents/catalog` execution choices, with separate member and template namespaces |
 | `src/kiro_crew/dashboard/handlers/agent_templates.py` | The Agent templates tab's roster (`/api/agents/templates`), create, delete with reference guard, and the read-only rule the detail PATCH applies to definition edits |
 | `website/src/pages/overview/AgentTemplatesTab.tsx` | The **Agent templates** tab of `CapabilitiesPage`: list by origin, edit the shared definition, create, delete, chat-with / enroll |
-| `src/kiro_crew/dashboard/handlers/members.py` | `/api/members` roster, thread get-or-create, rules, activity |
+| `src/kiro_crew/dashboard/handlers/members.py` | `/api/members` roster, thread get-or-create, rules, activity, and the one-time crewmate opt-in (`/api/members/optin`) |
+| `website/src/pages/members/CrewmateOptIn.tsx` | The one-time "Meet your crewmates" step over the Crewmates page for an existing user with custom agents and no crewmate |
 | `website/src/pages/KiroCrewAgentsPage.tsx` | The Crews UI, mounted as the **Crews** tab of `CapabilitiesPage` (Agent Capabilities) |
 | `website/src/components/crew/crewEditorSections.ts` | The crew editor's pane registry, including the Routing pane that edits `triggers` |
 | `website/src/components/CrewWakeSection.tsx` | "What wakes this agent" — schedules, deliberately distinct from `triggers` |
@@ -724,6 +725,71 @@ outranks all four and is not considered there.
 The loader is defensive about hand-edited config: a non-string `model` or
 `triggers` collapses to `""`, an unknown `reasoning_effort` collapses to inherit,
 and a junk watchdog override collapses to `0`.
+
+## One-time opt-in for existing custom agents
+
+An existing user who reaches the Crewmates page with custom agents under
+`~/.kiro/agents` but no crew registered is offered, ONCE, to turn those agents
+into crewmates. The step (`CrewmateOptIn.tsx`) renders in the shipped
+split-screen first-run chrome (`OnboardingChapterShell`, standalone mode — the
+page sits outside App's persistent shell host) and never over a first-run
+chapter: it waits for `onboarded`, `import_onboarded` and `privacy_acked`.
+
+`GET /api/members/optin` answers the whole decision in one read:
+`{done, crewmates, candidates, omitted}`. `done` is
+`dashboard.crewmate_optin_done` (the persisted gate, see
+[config](config.md#crewmate-opt-in-state)); `crewmates` is the count of crews
+the user registered — the loader's synthesized `default` crew (present on
+exactly the install this step exists for) is not one; each candidate is
+`{name, description, chats, last_used_ts}`. A candidate is a global spec on
+disk the user authored that a crewmate could be built from and none is built
+from yet — the sync path's exclusions plus package specs: the runtime's own
+specs (`source == "kirocrew"`, `kirocrew_owned`), a package-installed spec
+(`source == "package"`, the agent sync's to enrol), a crew's private copy
+(`private_to`), a name already a crew or bound as one's `kiro_agent`, and a name
+the create route would refuse (grammar or credential-shaped). A `description`
+the roster mask would rewrite is dropped, not masked: the step persists it as
+the new crewmate's own, and the mask sentinel is presentation text; one longer
+than 400 characters is cut there. `chats` is `agent_usage()` from session
+history — one per logical conversation the agent was the selected agent of —
+and decides the pre-check; an unreadable history degrades to 0, never to no
+step. Candidates are sorted used-first, most recent on top, then by name, and
+at most 200 travel: `~/.kiro/agents` is a shared directory, so the read bounds
+what it retains from it and reports the rest as `omitted`, which the step
+shows as a line under the list ("N more custom agents are not listed") rather
+than passing a partial list off as the whole. App tokens are denied
+(404, like every member surface); the scan runs on the discovery executor and a
+failure answers 503 `optin_candidates_unavailable`.
+
+The step opens when `!done && crewmates == 0 && candidates.length > 0`, then
+stays open until the user leaves it — a partial add moves both the count and
+the list, and the step must not vanish mid-recovery. "Add N crewmates" creates
+one crew per checked agent through the existing `POST /api/agents` (name =
+agent id, `kiro_agent` = agent id, the spec's description, `source:
+"kirocrew"`; the server allocates the private V2 store), sequentially so a
+failure names the agent that refused; the ones that landed stay checked and
+locked, and a retry adds only what is missing. After a completed add the page
+invalidates `['kirocrew-agents']`, records the step as over and — only once
+that record succeeded — lands on `/members?member=<name>` for the most recently
+used new crewmate; the roster is the confirmation, there is no success banner.
+A refused record keeps the step open with every row locked and the reason
+shown, and "Not now" retries the record. Once any row has landed, that exit
+reads "Keep added and close" — it is the same record-and-leave, named for the
+moment the reader is unsure what leaving does. A failed read of the step's state
+records nothing (retried in place, stale after 30s), so the step is simply
+offered on the next visit. "Not now" records the step as over without creating
+anything. Escape closes the step for the visit only and
+records nothing — a habituated keypress must not spend a one-time offer. A read
+that finds `crewmates > 0` with `done` still false also records the step as over
+(best-effort, from the page), but only on a visit the step did not open in: a
+user who built crewmates through "+" and later deletes the last one is past
+this step, not a first-timer, whereas a count that moved because of this step's
+own adds (a partial add's refetch) is not a record — the step's exits are.
+
+`POST /api/members/optin/done` is that record: owner-only, idempotent, a DELTA
+write of `dashboard.crewmate_optin_done = true` through `update_config_locked`
+under `run_config_write` (never a whole-document save). There is no API back
+to "not done" by design; re-offering the step is a config edit.
 
 ## Selection: the `select_crew` contract
 

@@ -2845,6 +2845,33 @@ export interface MemberRosterRow {
   [extra: string]: unknown
 }
 
+/** One custom agent GET /api/members/optin offers as a crewmate-to-be. */
+export interface CrewmateOptinCandidate {
+  /** The agent id — also the crewmate's name and its `kiro_agent` when added. */
+  name: string
+  /** The spec's own description; dropped server-side when the roster mask
+   *  would rewrite it, cut at the server's length cap otherwise. */
+  description: string
+  /** Logical conversations this agent was the selected agent of; 0 = never used. */
+  chats: number
+  /** Epoch seconds of the newest such conversation; 0 when never used. */
+  last_used_ts: number
+}
+
+/** GET /api/members/optin — the one-time opt-in step's state. */
+export interface CrewmateOptinState {
+  /** The persisted gate (`dashboard.crewmate_optin_done`). */
+  done: boolean
+  /** Crewmates the user registered (the loader's synthesized `default` is
+   *  not one); the step is offered only at 0. */
+  crewmates: number
+  /** Used agents first, most recent on top, then the never-used by name;
+   *  capped server-side. */
+  candidates: CrewmateOptinCandidate[]
+  /** Candidates the cap left out of `candidates`; 0 when the list is whole. */
+  omitted: number
+}
+
 /** One entry of GET /api/members/{slug}/activity — a recorded engagement.
  *  `via` distinguishes a session the user opened with the member ('chat')
  *  from an orchestrator routing decision ('select_crew'); the latter records
@@ -3799,6 +3826,15 @@ export const api = {
   // mode="member"), so this is also the only place a member slot key comes from.
   memberThread: (slug: string) =>
     post('/api/members/' + encodeURIComponent(slug) + '/thread').then(j) as Promise<{ slot_key: string; slug: string; member: string }>,
+  // The one-time "Meet your crewmates" step for an existing user: the persisted
+  // gate, how many crewmates exist, and the custom agents a crewmate could be
+  // built from with each one's chat count from session history. Read on the
+  // Crewmates page; the step itself creates crewmates through
+  // `createKirocrewAgent` (no second create path) and closes through `done`.
+  membersOptin: () => fetch('/api/members/optin').then(j) as Promise<CrewmateOptinState>,
+  // Both exits of the step ("Not now" and a finished add) record it as over;
+  // the flag lives in gateway config, so no browser sees the step twice.
+  membersOptinDone: () => post('/api/members/optin/done').then(j) as Promise<{ ok: boolean; done: boolean }>,
   // A member's recent activity pointers (real recorded signal only: session
   // participations and routing decisions). `member` is the exact crew name —
   // slugs are lossy, so the backend filters the shared log by exact name.

@@ -25,7 +25,7 @@ import os
 import re
 import threading
 import uuid
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
@@ -1430,6 +1430,7 @@ def persist_member_config(
     create: bool = False,
     expected_store=None,
     changed_fields: set[str] | None = None,
+    before_publish: Callable[[], None] | None = None,
 ) -> None:
     """Atomically publish a member and its ownership while retaining other writes.
 
@@ -1438,6 +1439,12 @@ def persist_member_config(
     the creation paths through :func:`retire_unpublished_allocation` once this
     function has failed; it can neither replace the winner nor adopt another
     store.
+
+    ``before_publish`` runs INSIDE the locked mutation, after the concurrency
+    checks have passed and immediately before the record is written: the hook
+    for work that must be one critical section with the registration (the
+    crew-teams purge of a recreated name). A hook that raises aborts the
+    write and its exception propagates unchanged.
 
     Updates may name only the fields the caller actually changed, preserving
     concurrent edits to other fields. None retains full-record publication;
@@ -1526,6 +1533,8 @@ def persist_member_config(
             ):
                 raise UnknownMemoryStore(f"memory store {store!r} ownership changed concurrently")
             stores[store] = {**(existing or {}), **store_record}
+        if before_publish is not None:
+            before_publish()
         agents[member] = {**(current or {}), **agent_record}
         return data
 

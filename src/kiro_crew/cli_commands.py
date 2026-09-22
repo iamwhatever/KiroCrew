@@ -1264,6 +1264,15 @@ def _handle_agent(args: argparse.Namespace) -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+        # A crew that carried this name before may still be listed on a team
+        # (every removal path drops it best-effort). Purge that INSIDE the
+        # registry's locked mutation, right before the name is registered --
+        # outside it, another process could create and team the same name in
+        # between and have that fresh membership purged -- or the new crew would
+        # silently inherit the old membership; a purge that cannot be made
+        # refuses the create.
+        from kiro_crew import crew_teams
+
         cfg.agents[args.name] = KiroCrewAgentConfig(
             kiro_agent=args.kiro_agent,
             workspace=args.workspace,
@@ -1274,7 +1283,12 @@ def _handle_agent(args: argparse.Namespace) -> None:
         try:
             require_member_memory_creation(args.name)
             provision_member_memory(cfg, args.name)
-            persist_member_config(cfg, args.name, create=True)
+            persist_member_config(
+                cfg,
+                args.name,
+                create=True,
+                before_publish=lambda: crew_teams.release_for_create(args.name),
+            )
         except BaseException as exc:
             allocated = cfg.agents[args.name].memory_store
             if allocated != previous_store:
@@ -1285,6 +1299,15 @@ def _handle_agent(args: argparse.Namespace) -> None:
                     previous_store=previous_store,
                     previous_member_id=previous_member_id,
                 )
+            if isinstance(exc, crew_teams.TeamsUnavailable):
+                print(
+                    f"Error: cannot create agent '{args.name}': a previous crew of that "
+                    f"name may still be on a team and the crew-teams store is unavailable "
+                    f"({exc}); fix or remove {crew_teams.teams_path()} (an absent file "
+                    "reads as no teams), then retry",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             if not isinstance(exc, (OSError, UnknownMemoryStore)):
                 raise
             print(f"Error: {exc}", file=sys.stderr)
@@ -1336,6 +1359,8 @@ def _handle_agent(args: argparse.Namespace) -> None:
             )
             sys.exit(1)
 
+        from kiro_crew import crew_teams
+
         def _mutate_agent_delete(doc: dict) -> dict:
             agents = coerce_dict_section(doc, "agents")
             if args.name not in agents:
@@ -1349,6 +1374,14 @@ def _handle_agent(args: argparse.Namespace) -> None:
             ):
                 raise _CliConflict(f"cannot delete default agent '{args.name}'")
             del agents[args.name]
+            # Same best-effort drop as the dashboard delete route, and in the
+            # same place: INSIDE the locked mutation that removes the entry, so
+            # a same-name create in another process (which needs this lock)
+            # cannot land between the delete and the drop. A stale team entry
+            # is hidden by every reader and never turns a committed delete
+            # into a failure; the recreate-under-the-same-name harm is closed
+            # on the create path (release_name), not here.
+            crew_teams.drop_member(args.name)
             return doc
 
         with memory_store_namespace_lock():

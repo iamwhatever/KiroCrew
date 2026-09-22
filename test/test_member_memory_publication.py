@@ -271,6 +271,40 @@ def test_cli_publication_failure_keeps_legacy_binding_and_preserves_new_store(
     assert require_member_memory_store(KiroCrewConfig.load(), "legacy") == "default"
 
 
+def test_before_publish_runs_inside_the_locked_mutation_and_can_refuse(owner_gateway):
+    """The hook the crew-teams purge rides: it runs after the concurrency
+    checks and BEFORE the record lands, and a raise aborts the write with
+    the config untouched."""
+    from kiro_crew.config import loader
+
+    cfg = owner_gateway
+    cfg.agents["new-member"] = KiroCrewAgentConfig()
+    provision_member_memory(cfg, "new-member")
+    seen: list[bool] = []
+
+    def hook() -> None:
+        # Observed from inside the mutation: the record is not on disk yet.
+        on_disk = json.loads(loader.config_path().read_text(encoding="utf-8"))
+        seen.append("new-member" in on_disk.get("agents", {}))
+
+    persist_member_config(cfg, "new-member", create=True, before_publish=hook)
+    assert seen == [False]
+    assert require_member_memory_store(KiroCrewConfig.load(), "new-member") != "default"
+
+    cfg.agents["second"] = KiroCrewAgentConfig()
+    provision_member_memory(cfg, "second")
+
+    class _Refused(Exception):
+        pass
+
+    def refuse() -> None:
+        raise _Refused("teams store unavailable")
+
+    with pytest.raises(_Refused):
+        persist_member_config(cfg, "second", create=True, before_publish=refuse)
+    assert "second" not in KiroCrewConfig.load().agents
+
+
 def test_retire_keeps_a_store_the_disk_config_still_references(owner_gateway):
     # Direct contract of the retire helper: a store that config.json names is
     # never removed, and the in-memory binding is still restored for a retry.

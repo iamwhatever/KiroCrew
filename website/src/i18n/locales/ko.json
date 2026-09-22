@@ -5976,6 +5976,8 @@
     "chatPane": {
       "agent_list": "에이전트 목록",
       "close_pane": "창 닫기",
+      "crewmate_quiet": "{{name}}은(는) 아직 당신에게 아무 말도 하지 않았습니다.",
+      "crewmate_quiet_where": "지금까지 한 작업은 멤버 요약에 있습니다.",
       "earlier_messages_load_failed": "이전 메시지를 불러올 수 없습니다. 대화의 맨 위로 스크롤하여 다시 시도하세요.",
       "earlier_messages_open_session": "이전 메시지 — 전체 세션 열기(분할 보기 닫힘)",
       "earlier_messages_unavailable": "이전 메시지를 이 세션 기록에서 더 이상 사용할 수 없습니다.",

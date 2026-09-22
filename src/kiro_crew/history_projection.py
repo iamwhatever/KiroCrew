@@ -941,8 +941,19 @@ class TranscriptReadProjection:
         self,
         key: str,
         sanitize: Callable[[str], str] | None = None,
+        *,
+        speech_only: bool = False,
     ) -> tuple[str, float, bool]:
         """Return the newest preview, the recency epoch, and a stop flag.
+
+        ``speech_only`` previews only rows ``is_speech_row`` accepts (user /
+        assistant, minus system notices and workflow envelopes). The Crew
+        Members roster passes it: a member's chat draws only what the member says
+        (``crew-mode.md``, "A crewmate's chat"), so its row's one-line preview
+        must quote the same thing, or a patroller whose chat is empty sits
+        beside a row quoting a shell command. The recency epoch is unchanged
+        by it -- it still reads the newest row, because a patrol IS activity
+        and the roster orders by it.
 
         Three values from the tail walk, because the preview text and the two
         facts about it can come from different rows:
@@ -969,6 +980,7 @@ class TranscriptReadProjection:
         # scope, which lands back here, so a top-level import would be a
         # cycle. By preview time the dashboard module is long since loaded.
         from kiro_crew.dashboard.state import is_stop_event_row
+        from kiro_crew.dashboard.system_notices import is_speech_row
 
         path = self._log._path(key)
         try:
@@ -1041,6 +1053,13 @@ class TranscriptReadProjection:
                 if newest_is_stop is None:
                     newest_is_stop = row_is_stop
                 if row_is_stop:
+                    if not newest_epoch:
+                        newest_epoch = _row_epoch(data)
+                    continue
+                if speech_only and not is_speech_row(
+                    data.get("role"), data.get("content"), data.get("meta")
+                ):
+                    # Machinery: skipped for the TEXT, kept for the recency.
                     if not newest_epoch:
                         newest_epoch = _row_epoch(data)
                     continue

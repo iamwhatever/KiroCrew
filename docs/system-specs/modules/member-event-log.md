@@ -54,7 +54,7 @@ unit's id must not be enumerated as that other unit.
 | `member/config` | the roster's config-derived fields plus `changed: [field, ...]` | `handlers.agents` after a save that changed at least one roster field; `handlers.members.api_members` when the folded roster disagrees with the agents config (hand-edited config) |
 | `member/binding` | `{slot_key}` | `handlers.members.api_member_thread` after the DM binding is written |
 | `member/rules` | `{text}` | `handlers.members.api_member_rules_put` after the rules file is written |
-| `member/message` | `{ts, preview}` | `DashboardState._broadcast_chat_message` for a member DM slot |
+| `member/message` | `{ts, preview?}` — `preview` only for a SPEECH row (`user` / `assistant` with visible text); a machinery row (tool call, auto-nudge turn, envelope, say-nothing reply) carries `ts` alone, so the roster's `last_message` keeps the last thing said while `last_active_ts` still bumps. The cold roster read applies the same rule through `last_message_info(speech_only=True)` | `DashboardState._broadcast_chat_message` for a member DM slot |
 | `activity/record` | the participation record, including `ts` | `members.record_activity` (replaces the former `activity.jsonl`) |
 | `slot/opened` · `slot/closed` | `{slot_key}` · `{slot_key, reason}` | the `slots` broadcast, diffing member-driven slots against the previous set |
 | `patrol/started` · `patrol/stopped` | `{slot_key}` · `{slot_key, reason}` | the auto-nudge state callback in `slack.gateway` |
@@ -169,7 +169,12 @@ durably creates `.legacy-activity-folded` inside the fenced unit directory befor
 retiring the source files by rename; the binding and rules sources remain because
 their own events gate re-import. `api_members` reconciles the folded roster against
 the agents config on read, so a hand edit becomes one `member/config` event with the
-fields that differed.
+fields that differed. It reconciles the roster's `last_message` the same way
+(`eventlog_hooks.reconcile_member_preview`): the transcript's speech-only read is the
+authority, so a fold still quoting a machinery preview written before the preview
+became speech-only gets one correcting `member/message` — carrying the empty string
+when the member has never spoken, so the stale line does not stand beside an empty
+chat — and a second read appends nothing.
 
 A slug is LOSSY: `slug_for_name` says so in its own docstring, and `Review_Agent`
 and `review-agent` both fold to `review-agent`. Colliding names are SUPPORTED, and

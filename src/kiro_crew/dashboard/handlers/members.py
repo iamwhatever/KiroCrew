@@ -309,8 +309,10 @@ async def api_members(request: web.Request) -> web.Response:
             mt = state.conversation_log.session_mtime(log_key)
             if not mt:
                 continue
+            # Speech only: the row's preview quotes what the member's chat
+            # draws (its speech), never a tool call or a patrol turn.
             preview, msg_ts, stopped = state.conversation_log.last_message_info(
-                log_key, sanitize=_sanitize
+                log_key, sanitize=_sanitize, speech_only=True
             )
             # Order by the newest MESSAGE, not the file: metadata writes and
             # rehydration bump the mtime without any new message, which made
@@ -405,12 +407,31 @@ async def api_members(request: web.Request) -> web.Response:
                 snap = svc.snapshot(slug)
                 values = snap.get("values", {}) if isinstance(snap, dict) else {}
                 agent_cfg = agent_cfgs.get(row["name"])
+                appended = False
                 if agent_cfg is not None:
-                    eventlog_hooks.reconcile_member_config(
-                        slug, row["name"], agent_cfg, values.get("roster", {})
+                    appended = (
+                        eventlog_hooks.reconcile_member_config(
+                            slug, row["name"], agent_cfg, values.get("roster", {})
+                        )
+                        is not None
                     )
-                    # Re-snapshot only when the reconcile appended (the roster
-                    # config fields would otherwise be stale for this response).
+                # The transcript's speech-only preview (read above) is the
+                # authority for the roster's `last_message`; a fold that still
+                # quotes a pre-speech-only machinery preview is corrected here,
+                # to blank when the member has never spoken.
+                appended = (
+                    eventlog_hooks.reconcile_member_preview(
+                        slug,
+                        row["name"],
+                        row.get("last_message", ""),
+                        row.get("last_active_ts"),
+                        values.get("roster", {}),
+                    )
+                    or appended
+                )
+                if appended:
+                    # Re-snapshot only when a reconcile appended (the roster
+                    # fields would otherwise be stale for this response).
                     snap = svc.snapshot(slug)
                 out[slug] = snap if isinstance(snap, dict) else {"asOfSeq": -1, "values": {}}
             except Exception:

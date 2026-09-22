@@ -3080,8 +3080,12 @@ class ConversationLog:
     def last_message_preview(self, key: str, sanitize=None) -> str:
         return self._read_projection.last_message_preview(key, sanitize=sanitize)
 
-    def last_message_info(self, key: str, sanitize=None) -> tuple[str, float, bool]:
-        return self._read_projection.last_message_info(key, sanitize=sanitize)
+    def last_message_info(
+        self, key: str, sanitize=None, *, speech_only: bool = False
+    ) -> tuple[str, float, bool]:
+        return self._read_projection.last_message_info(
+            key, sanitize=sanitize, speech_only=speech_only
+        )
 
     @staticmethod
     def _content_text(content: object) -> str:

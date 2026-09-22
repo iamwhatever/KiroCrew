@@ -308,6 +308,44 @@ def reconcile_member_config(slug, name, agent_cfg, roster_view) -> "list[str] | 
         return None
 
 
+def reconcile_member_preview(slug, name, preview, msg_ts, roster_view) -> bool:
+    """Append a correcting member/message when the log's roster preview drifts
+    from the transcript's speech-only read.
+
+    The roster row's ``last_message`` is folded last-wins from ``member/message``
+    events. Events written BEFORE the preview became speech-only (or by any
+    writer that does not apply ``is_speech_row``) carry machinery text -- a tool
+    line, a patrol turn -- and a cold fold would keep quoting it beside a chat
+    that draws none of it. The transcript is the authority: ``api_members`` has
+    just read it with ``speech_only=True`` and passes the answer here, INCLUDING
+    an empty one, so a never-spoken patroller's stale preview is corrected to
+    blank rather than left standing. Appends nothing when the two already agree,
+    so a second read writes nothing. Carries the transcript's newest epoch as
+    ``ts`` (the roster orders by it) when one is known, else the current time.
+
+    Returns True when an event was appended. Best-effort: failures are swallowed.
+    """
+    if not slug:
+        return False
+    try:
+        view = roster_view if isinstance(roster_view, dict) else {}
+        current = view.get("last_message")
+        wanted = preview if isinstance(preview, str) else ""
+        if (current or "") == wanted:
+            return False
+        from kiro_crew.eventlog.service import get_service
+        from kiro_crew.eventlog.types import MEMBER_MESSAGE
+
+        svc = get_service()
+        svc.ensure(slug, name or slug)
+        ts = float(msg_ts) if msg_ts else time.time()
+        svc.append(slug, MEMBER_MESSAGE, {"ts": ts, "preview": wanted})
+        return True
+    except Exception:
+        logger.debug("reconcile_member_preview failed for slug=%r", slug, exc_info=True)
+        return False
+
+
 def _patrol_is_still_armed_at(values: dict, observed: dict) -> bool:
     """Does the patrol the caller decided to close still exist, unchanged?
 

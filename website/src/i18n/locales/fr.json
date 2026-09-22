@@ -6164,6 +6164,8 @@
     "chatPane": {
       "agent_list": "Liste des agents",
       "close_pane": "Fermer le volet",
+      "crewmate_quiet": "{{name}} ne t’a encore rien dit.",
+      "crewmate_quiet_where": "Ce qu’il a fait se trouve dans son Résumé du membre.",
       "earlier_messages_load_failed": "Impossible de charger les messages précédents. Faites défiler jusqu'au début de la conversation pour réessayer.",
       "earlier_messages_open_session": "Messages précédents — ouvrir la session complète (ferme la vue divisée)",
       "earlier_messages_unavailable": "Les messages précédents ne sont plus disponibles dans l’historique de cette session.",

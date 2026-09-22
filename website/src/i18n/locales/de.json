@@ -6070,6 +6070,8 @@
     "chatPane": {
       "agent_list": "Agenten-Liste",
       "close_pane": "Bereich schließen",
+      "crewmate_quiet": "{{name}} hat dir noch nichts gesagt.",
+      "crewmate_quiet_where": "Was es bisher getan hat, steht in seiner Crew-Übersicht.",
       "earlier_messages_load_failed": "Frühere Nachrichten konnten nicht geladen werden. Zum Anfang der Unterhaltung scrollen, um es erneut zu versuchen.",
       "earlier_messages_open_session": "Frühere Nachrichten — vollständige Sitzung öffnen (schließt die geteilte Ansicht)",
       "earlier_messages_unavailable": "Frühere Nachrichten sind im Verlauf dieser Sitzung nicht mehr verfügbar.",

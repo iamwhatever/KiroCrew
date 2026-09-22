@@ -1,8 +1,11 @@
-import { useState } from 'react'
-import { AlertCircle, Coins, ExternalLink, Eye, EyeOff, Gift, Loader2, UserRound } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { AlertCircle, Coins, ExternalLink, Eye, EyeOff, Gift, Loader2, RefreshCw, UserRound } from 'lucide-react'
 
-import type { KiroBonusCreditGrant, KiroCreditUsage } from '../api/client'
-import { fmtCurrency, fmtDateFields, fmtNumber, fmtPercent } from '../i18n/format'
+import { api } from '../api/client'
+import type { KiroBonusCreditGrant, KiroCreditUsage, KiroUsageRefreshResponse } from '../api/client'
+import { parseKiroUsagePayload } from '../api/kiroUsage'
+import { fmtCurrency, fmtDateFields, fmtNumber, fmtPercent, fmtTime } from '../i18n/format'
 import { i18nT } from '../i18n/t'
 import { safeGetItem, safeSetItem } from '../utils/safeStorage'
 import Clickable from './Clickable'
@@ -18,18 +21,68 @@ export type { KiroBonusCreditGrant, KiroCreditUsage }
  * cache warms, `'none'` when the account has no credit plan, `'failed'` when
  * the fetch itself failed with nothing cached, `'api-key'` when the account
  * authenticates with an API key (usage needs an SSO/OIDC token that auth type
- * never has, so the state is terminal by construction), or `'scrape-disabled'`
- * when the free usage API returned no plan and the billed `/usage` text scrape
- * is opted out (terminal until the user enables
- * `dashboard.usage_text_scrape_enabled`). `null` is the ONLY
- * value that means "still loading" — the others have nothing more to wait for,
- * so spinning on them would repeat the defect this distinction exists to remove.
+ * never has, so the state is terminal by construction), or `'signin-required'`
+ * when no live Kiro credential could be read. `null` is the ONLY value that
+ * means "still loading" — the others have nothing more to wait for, so spinning
+ * on them would repeat the defect this distinction exists to remove.
  */
-export type KiroAccountUsage = KiroCreditUsage | null | 'none' | 'failed' | 'api-key' | 'scrape-disabled' | 'signin-required'
+export type KiroAccountUsage = KiroCreditUsage | null | 'none' | 'failed' | 'api-key' | 'signin-required'
 
 /** True only for an actual reading, so the sentinels cannot reach a field access. */
 const isUsageReading = (usage: KiroAccountUsage): usage is KiroCreditUsage =>
   typeof usage === 'object' && usage !== null
+
+/**
+ * The no-reading states a refresh can fill. `'api-key'` is excluded because that
+ * auth type has no credit readout at all, and `'signin-required'` takes the
+ * sign-in error surface before this is consulted: the `/usage` read needs the
+ * same sign-in. `null` is still loading, so there is nothing to refresh yet.
+ */
+const canRefreshUsage = (usage: KiroAccountUsage): boolean =>
+  usage === 'failed' || usage === 'none'
+
+/**
+ * Why a refresh did not produce a new reading, mapped to one plain sentence
+ * each. `in_flight` is the one outcome that is not a failure: the gateway is
+ * already refreshing, so it renders as progress, not as an error.
+ */
+type UsageRefreshNotice =
+  | { kind: 'in_flight' }
+  | { kind: 'parked'; minutes: number }
+  | { kind: 'stale_refresh' }
+  | { kind: 'failed' }
+
+/**
+ * Classify a refused refresh from the status the gateway sends. Duck-typed on
+ * `status` rather than `instanceof ApiError`, the same way `isNotFoundError`
+ * is, so a suite that mocks `api/client` still reaches every branch.
+ */
+function classifyRefreshError(err: unknown): UsageRefreshNotice {
+  const e = err as { status?: unknown } | null
+  if (typeof e === 'object' && e !== null && e.status === 409) return { kind: 'in_flight' }
+  return { kind: 'failed' }
+}
+
+function refreshNoticeMessage(notice: UsageRefreshNotice): string {
+  switch (notice.kind) {
+    case 'in_flight':
+      return i18nT('components.kiroAccountModal.refresh_in_flight')
+    case 'parked':
+      return i18nT('components.kiroAccountModal.refresh_paused', { minutes: fmtNumber(notice.minutes) })
+    case 'stale_refresh':
+      return i18nT('components.kiroAccountModal.refresh_returned_stale')
+    default:
+      return i18nT('components.kiroAccountModal.refresh_failed')
+  }
+}
+
+/**
+ * How long after a 409 to re-read the pill's query. The gateway's own refresh
+ * is a whoami + `/usage` subprocess pair that usually settles within a few
+ * seconds; one re-read then shows its result without waiting for the pill's
+ * 30 s poll. If it is still running, that poll picks the result up later.
+ */
+const IN_FLIGHT_RECHECK_MS = 3000
 
 interface KiroAccountModalProps {
   open: boolean
@@ -230,7 +283,118 @@ function UsageSkeleton() {
   )
 }
 
+/**
+ * Refresh the credit reading on demand. One press asks the gateway for one
+ * refresh (`POST /api/sessions/usage/refresh`: the free API, then the `/usage`
+ * scrape) and the reading lands in the same `['kiro-usage']` query the top-bar
+ * pill polls, so the pill updates with the modal.
+ */
+function useUsageRefresh() {
+  const queryClient = useQueryClient()
+  const [notice, setNotice] = useState<UsageRefreshNotice | null>(null)
+  const [checkedAt, setCheckedAt] = useState<Date | null>(null)
+  const mutation = useMutation({
+    mutationFn: () => api.sessionsUsageRefresh(),
+    // Never retried: the 409 the gateway sends while a refresh is already
+    // running is an answer to show, not a throttle to wait out, and a retry
+    // would queue a second subprocess behind the first.
+    retry: false,
+    onMutate: () => setNotice(null),
+    onSuccess: (res: KiroUsageRefreshResponse) => {
+      if (res.skipped === 'scrape_parked') {
+        const secs = typeof res.retry_after === 'number' ? res.retry_after : 0
+        setNotice({ kind: 'parked', minutes: Math.max(1, Math.ceil(secs / 60)) })
+        return
+      }
+      const parsed = parseKiroUsagePayload(res)
+      if (!isUsageReading(parsed)) {
+        // The refresh ran and still produced no plan. The cache is not written
+        // here: a 'none' result would hide the pill and auto-close this modal
+        // with the explanation still unread.
+        setNotice({ kind: 'failed' })
+        return
+      }
+      queryClient.setQueryData(['kiro-usage'], parsed)
+      void queryClient.invalidateQueries({ queryKey: ['kiro-usage'] })
+      if (parsed.stale) {
+        // The gateway answered with its EARLIER reading, dimmed: this refresh
+        // fetched nothing new. Stamping it as checked now would claim a
+        // freshness the numbers do not have, so the time stays unset and the
+        // outcome is reported instead.
+        setNotice({ kind: 'stale_refresh' })
+        return
+      }
+      setCheckedAt(new Date())
+    },
+    onError: err => setNotice(classifyRefreshError(err)),
+  })
+  // A 409 means the gateway is refreshing already. Re-read the pill's query
+  // once after that refresh has had time to settle, so its result shows here
+  // without the user pressing again; the pill's 30 s poll covers a slower one.
+  const inFlight = notice?.kind === 'in_flight'
+  useEffect(() => {
+    if (!inFlight) return
+    const timer = window.setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: ['kiro-usage'] })
+    }, IN_FLIGHT_RECHECK_MS)
+    return () => window.clearTimeout(timer)
+  }, [inFlight, queryClient])
+  return { mutation, notice, checkedAt }
+}
+
+function RefreshButton({
+  pending,
+  onClick,
+  compact,
+}: {
+  pending: boolean
+  onClick: () => void
+  compact: boolean
+}) {
+  // One verb for the one action, wherever the button sits.
+  const label = pending
+    ? i18nT('components.kiroAccountModal.refreshing_balance')
+    : i18nT('components.kiroAccountModal.refresh_balance')
+  const shape = compact
+    ? 'rounded-md border border-border bg-transparent px-2.5 py-1 text-[12px] font-medium text-muted hover:border-border-strong hover:text-text'
+    : 'rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-fg hover:brightness-110'
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={pending}
+      aria-busy={pending || undefined}
+      className={`inline-flex items-center gap-1.5 self-start transition-all disabled:cursor-default disabled:opacity-60 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent ${shape}`}
+    >
+      {pending
+        ? <Loader2 className="lucide-inline animate-spin" aria-hidden="true" />
+        : <RefreshCw className="lucide-inline" aria-hidden="true" />}
+      {label}
+    </button>
+  )
+}
+
 function CreditUsage({ usage, onClose }: { usage: KiroAccountUsage; onClose: () => void }) {
+  const refresh = useUsageRefresh()
+  const refreshPending = refresh.mutation.isPending
+  // A refresh that produced nothing new takes the shared error surface with
+  // its agent hand-off, the same shape as the sign-in notice below. The
+  // hand-off opens the chat this overlay sits over, so the modal closes with
+  // it. The one exception is a refresh the gateway is ALREADY running: that is
+  // progress, not failure, so it is a quiet status line the query re-read
+  // above resolves on its own.
+  const refreshNotice = refresh.notice === null
+    ? null
+    : refresh.notice.kind === 'in_flight'
+      ? (
+        /* No hand-off: the user's refresh is happening, on the gateway's side;
+           there is nothing to recover from and the result arrives by itself. */
+        <p role="status" className="flex items-center gap-2 text-[12px] text-muted">
+          <Loader2 className="lucide-inline animate-spin" aria-hidden="true" />
+          {refreshNoticeMessage(refresh.notice)}
+        </p>
+      )
+      : <ErrorNotice message={refreshNoticeMessage(refresh.notice)} askAgent onHandoff={onClose} />
   // Only a cache that has not warmed yet is still loading. A failed fetch and an
   // account with no plan both have nothing pending, so they get the static
   // notice rather than a skeleton that never resolves.
@@ -252,13 +416,18 @@ function CreditUsage({ usage, onClose }: { usage: KiroAccountUsage; onClose: () 
   }
   if (!isUsageReading(usage)) {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-border bg-bg-elevated/40 p-3.5 text-[13px] text-muted">
-        <AlertCircle className="lucide-inline shrink-0" />{' '}
-        {i18nT(usage === 'api-key'
-          ? 'components.kiroAccountModal.credit_usage_api_key_auth'
-          : usage === 'scrape-disabled'
-            ? 'components.kiroAccountModal.credit_usage_scrape_disabled'
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-bg-elevated/40 p-3.5 text-[13px] text-muted">
+          <AlertCircle className="lucide-inline shrink-0" />{' '}
+          {i18nT(usage === 'api-key'
+            ? 'components.kiroAccountModal.credit_usage_api_key_auth'
             : 'components.kiroAccountModal.credit_usage_unavailable')}
+        </div>
+        {/* Refresh sits directly under the notice that says there is no reading. */}
+        {canRefreshUsage(usage) && (
+          <RefreshButton pending={refreshPending} onClick={() => refresh.mutation.mutate()} compact={false} />
+        )}
+        {refreshNotice}
       </div>
     )
   }
@@ -318,6 +487,20 @@ function CreditUsage({ usage, onClose }: { usage: KiroAccountUsage; onClose: () 
         )}
       </div>
       {usage.bonusCredits && <BonusCredits grants={usage.bonusCredits} />}
+      {/* A compact Refresh beside every reading, with when this session last
+          refreshed it. A dimmed (stale) reading says so plainly: the gateway is
+          showing an earlier value because its latest refresh returned none. */}
+      <div className="flex items-center justify-between gap-3 text-[12px] text-muted">
+        <span>
+          {refresh.checkedAt
+            ? i18nT('components.kiroAccountModal.balance_checked_at', { time: fmtTime(refresh.checkedAt) })
+            : usage.stale
+              ? i18nT('components.kiroAccountModal.balance_may_be_stale')
+              : null}
+        </span>
+        <RefreshButton pending={refreshPending} onClick={() => refresh.mutation.mutate()} compact />
+      </div>
+      {refreshNotice}
       <p className="text-[11px] leading-relaxed text-muted">
         {i18nT('components.kiroAccountModal.usage_scope')}
       </p>

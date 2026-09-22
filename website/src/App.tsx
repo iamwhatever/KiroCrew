@@ -43,7 +43,7 @@ import { useNotificationSound } from './hooks/useNotificationSound'
 import { recordSessionStart, recordEvent } from './rum'
 import { ZoomProvider } from './hooks/ZoomProvider'
 import { api, isAuthBannerShown } from './api/client'
-import type { KiroCreditUsage, KiroUsagePayload } from './api/client'
+import { parseKiroUsagePayload, type KiroUsageState } from './api/kiroUsage'
 import { cronJobsQuery } from './api/cronJobsQuery'
 import { safeSetItem } from './utils/safeStorage'
 import { gcOrphanedStorage } from './utils/storageGc'
@@ -204,9 +204,6 @@ const UpdatePill = lazy(() => import('./components/UpdatePill'))
 const DiscoverPage = lazy(() => import('./pages/apps/DiscoverPage'))
 const LibraryPage = lazy(() => import('./pages/apps/LibraryPage'))
 
-const MAX_KIRO_BONUS_GRANT_NAME_CHARS = 100
-const MAX_KIRO_BONUS_CREDITS = 1_000_000
-const MAX_KIRO_BONUS_DAYS_LEFT = 3_650
 type LogSubscribeFn = (cb: ((data: { level: string; msg: string }) => void) | null) => void
 
 /** Minimal shape of an entry from `GET /api/apps`, limited to the fields the
@@ -2743,93 +2740,11 @@ export default function App() {
   // backend cache has not warmed yet" (null) apart from "the request failed"
   // (undefined) — both are falsy. Without it a failing endpoint renders as a
   // spinner that never resolves, since the 30s refetch keeps retrying forever.
-  const { data: kiroUsage, isError: kiroUsageFailed } = useQuery<KiroCreditUsage | 'none' | 'api-key' | 'scrape-disabled' | 'signin-required' | null>({
+  const { data: kiroUsage, isError: kiroUsageFailed } = useQuery<KiroUsageState>({
     queryKey: ['kiro-usage'],
-    queryFn: () => api.sessionsUsage().then(d => {
-      const u: KiroUsagePayload = d?.usage || {}
-      // Kiro credit plan (internal) — the only usage this pill surfaces.
-      // Number.isFinite guards against a stray NaN ever rendering as "NaN / NaN".
-      if (typeof u.credits_plan === 'number' && Number.isFinite(u.credits_plan)) {
-        const limit = Math.round(u.credits_plan)
-        // credits_used is the real total (backend sets it to covered + overage);
-        // fall back to 0 (not the limit) when the source omits it, so a partial
-        // payload never implies a maxed plan.
-        const used = typeof u.credits_used === 'number' && Number.isFinite(u.credits_used)
-          ? Math.round(u.credits_used)
-          : 0
-        const overage = typeof u.credits_overage === 'number' && Number.isFinite(u.credits_overage)
-          ? u.credits_overage
-          : Math.max(0, used - limit)
-        // Bonus grants come from untrusted CLI output. Validate every field so
-        // one malformed grant cannot poison the readout or account panel.
-        const bonusCredits = Array.isArray(u.bonus_credits)
-          ? u.bonus_credits.flatMap(grant => {
-              if (
-                !grant
-                || typeof grant.name !== 'string'
-                || !grant.name
-                || grant.name.length > MAX_KIRO_BONUS_GRANT_NAME_CHARS
-                || typeof grant.used !== 'number'
-                || !Number.isFinite(grant.used)
-                || grant.used < 0
-                || grant.used > MAX_KIRO_BONUS_CREDITS
-                || typeof grant.total !== 'number'
-                || !Number.isFinite(grant.total)
-                || grant.total <= 0
-                || grant.total > MAX_KIRO_BONUS_CREDITS
-                || (grant.days_left !== undefined
-                  && (typeof grant.days_left !== 'number'
-                    || !Number.isFinite(grant.days_left)
-                    || grant.days_left < 0
-                    || grant.days_left > MAX_KIRO_BONUS_DAYS_LEFT))
-              ) return []
-              return [{
-                name: grant.name,
-                used: grant.used,
-                total: grant.total,
-                daysLeft: grant.days_left,
-              }]
-            })
-          : []
-        const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
-        const parsedOverageRate = typeof u.overage_rate === 'number'
-          ? u.overage_rate
-          : Number.parseFloat(u.overage_rate ?? '')
-        const normalized: KiroCreditUsage = {
-          used,
-          limit,
-          overage,
-          resets: u.resets,
-          plan: u.plan,
-          costUsd: u.cost_usd,
-          overageRate: Number.isFinite(parsedOverageRate) ? parsedOverageRate : undefined,
-          bonusCredits,
-          stale: u.stale === true,
-          account: str(u.account),
-          email: str(u.email),
-          accountType: str(u.account_type),
-          startUrl: str(u.start_url),
-        }
-        return normalized
-      }
-      // Non-Kiro provider (kiro-cli absent) -> hide. API-key auth -> terminal
-      // "not available for this auth type" (the pill and modal explain instead
-      // of hiding, because for this account type the state is permanent, not a
-      // warming cache). Scrape opt-in off with no API plan -> same treatment:
-      // permanent until the user flips dashboard.usage_text_scrape_enabled, so
-      // explain rather than hide (#7623 — hiding left no hint a knob exists).
-      // No readable Kiro credential -> also terminal, but a DIFFERENT remedy:
-      // sign in again, which is free, where flipping the scrape knob spends
-      // credits on a fetch that cannot authenticate (#11602).
-      // Empty cache (Kiro warming) -> spinner.
-      if (u.available === false) {
-        if (u.reason === 'api_key_auth') return 'api-key' as const
-        if (u.reason === 'signin_required') return 'signin-required' as const
-        if (u.reason === 'scrape_disabled') return 'scrape-disabled' as const
-        return 'none' as const
-      }
-      return null
-    }),
+    // The parser is shared with the account modal's Refresh button, which
+    // writes its POST result into this same query: one normalization for both.
+    queryFn: () => api.sessionsUsage().then(parseKiroUsagePayload),
     refetchInterval: 30_000,
   })
   // Auto-close the details modal if usage resolves to unavailable — the pill
@@ -3990,20 +3905,11 @@ export default function App() {
                 // flight), but the label says why, and clicking through opens
                 // the modal's fuller explanation.
                 segments.push(<button key="usage" className={`${seg} text-muted opacity-60`} onClick={() => setKiroUsageOpen(true)} title={i18nT('app.kiro_credit_usage_api_key')} aria-label={i18nT('app.kiro_credit_usage_api_key')}><Coins size={12} /> <span className="font-mono text-[11px] tabular-nums">—</span></button>)
-              } else if (kiroUsageState === 'scrape-disabled') {
-                // The free usage API returned no plan and the billed /usage
-                // text scrape is opted out (its default). Permanent until the
-                // user flips dashboard.usage_text_scrape_enabled, so render
-                // the same terminal dash as 'api-key' with a label that names
-                // the knob — hiding the segment here left users of v0.1.3-era
-                // dashboards with a pill that silently vanished (#7623).
-                segments.push(<button key="usage" className={`${seg} text-muted opacity-60`} onClick={() => setKiroUsageOpen(true)} title={i18nT('app.kiro_credit_usage_scrape_disabled')} aria-label={i18nT('app.kiro_credit_usage_scrape_disabled')}><Coins size={12} /> <span className="font-mono text-[11px] tabular-nums">—</span></button>)
               } else if (kiroUsageState === 'signin-required') {
                 // No live Kiro credential could be read (or it was rejected), so
                 // the free API never got an answer about this account. Terminal
-                // like 'scrape-disabled', but the label must name the FREE remedy,
-                // signing in again, because the scrape-disabled copy sent these
-                // users to a billed knob that cannot authenticate either (#11602).
+                // like 'api-key', but the label must name the remedy: signing in
+                // again.
                 segments.push(<button key="usage" className={`${seg} text-muted opacity-60`} onClick={() => setKiroUsageOpen(true)} title={i18nT('app.kiro_credit_usage_signin_required')} aria-label={i18nT('app.kiro_credit_usage_signin_required')}><Coins size={12} /> <span className="font-mono text-[11px] tabular-nums">—</span></button>)
               } else if (!kiroUsageState) {
                 segments.push(<button key="usage" className={`${seg} text-muted`} onClick={() => setKiroUsageOpen(true)} title={i18nT('app.kiro_credit_usage_checking')} aria-label={i18nT('app.kiro_credit_usage_checking_2')}><Coins size={12} /> {!isMobile && <Loader2 size={11} className="animate-spin" />}</button>)

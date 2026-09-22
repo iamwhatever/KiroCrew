@@ -379,6 +379,14 @@ _FLOCK_ACQUIRE_TIMEOUT_S = 10.0
 _FLOCK_POLL_INTERVAL_S = 0.05
 
 
+class ThreadStoreUnreadable(ValueError):
+    """A reply-thread sidecar holds bytes that are not a thread map.
+
+    Raised by :meth:`ConversationLog.read_threads` instead of reading the file
+    as empty, so a writer never replaces damaged data with an empty map.
+    """
+
+
 class HistoryLockTimeout(TimeoutError):
     """Raised when the cross-process session lock cannot be acquired in time.
 
@@ -1160,6 +1168,49 @@ def _safe_key(key: str) -> str:
     return re.sub(r"[^\w\-.]", "_", key)
 
 
+#: Directory beside the transcripts holding one reply-thread sidecar per
+#: session (``dashboard/chat_threads.py``). The ONE spelling of the location:
+#: :meth:`ConversationLog.threads_sidecar_path` and Session Storage's
+#: "what files is this session made of" both derive it from here, so a
+#: reclaim can never leave a session's replies behind in the live store.
+THREADS_DIR_NAME = ".threads"
+THREADS_SIDECAR_SUFFIX = ".json"
+
+
+#: The reply-row schema the thread sidecar holds; :meth:`ConversationLog.read_threads`
+#: keeps these keys and no other.
+THREAD_REPLY_FIELDS: tuple[str, ...] = ("id", "role", "content", "ts")
+
+#: What :meth:`ConversationLog.read_threads` RETAINS of a sidecar, whatever the
+#: file holds. The writer (``dashboard/chat_threads.py``) never exceeds these --
+#: it clips an answer at 64 000 characters plus a marker and admits 500 replies
+#: per thread, 5 000 per sidecar -- so a sidecar it wrote is read back whole;
+#: a larger one (another writer under the data home) is cut to the same shape
+#: at the point of retention, never carried into memory as written.
+THREAD_REPLY_CONTENT_MAX_CHARS = 65_536
+THREAD_REPLY_FIELD_MAX_CHARS = 256
+THREADS_MAX_REPLIES_PER_THREAD = 500
+THREADS_MAX_REPLIES_PER_SIDECAR = 5_000
+
+
+def _thread_reply_row(raw: dict) -> dict[str, Any] | None:
+    """*raw* reduced to :data:`THREAD_REPLY_FIELDS` with bounded string values,
+    or ``None`` when ``id``, ``role`` or ``content`` is missing or not a string."""
+    row: dict[str, Any] = {}
+    for key in THREAD_REPLY_FIELDS:
+        value = raw.get(key, "" if key == "ts" else None)
+        if not isinstance(value, str):
+            return None
+        cap = THREAD_REPLY_CONTENT_MAX_CHARS if key == "content" else THREAD_REPLY_FIELD_MAX_CHARS
+        row[key] = value[:cap]
+    return row
+
+
+def threads_sidecar_for_stem(sessions_dir: Path, stem: str) -> Path:
+    """The reply-thread sidecar of the transcript ``<sessions_dir>/<stem>.jsonl``."""
+    return sessions_dir / THREADS_DIR_NAME / f"{stem}{THREADS_SIDECAR_SUFFIX}"
+
+
 def transcript_stem(key: str) -> str:
     """The canonical filename stem *key*'s transcript and archive segments share.
 
@@ -1938,6 +1989,154 @@ class ConversationLog:
                 }
             ),
         )
+
+    def threads_sidecar_path(self, key: str) -> Path:
+        """Sidecar path for a session's reply threads (``dashboard/chat_threads.py``).
+
+        A third sidecar beside the summary caches, for the same reason each of
+        those is its own file: the thread store has its own writer (a reply
+        landing) and no mtime contract with the transcript -- a reply must
+        survive every later append to the main chat, so it is never invalidated
+        by the session file's signature. Public because the thread store lives
+        outside this module; the transcript delete removes it with the others,
+        and Session Storage moves it with the transcript on reclaim.
+        """
+        return threads_sidecar_for_stem(self._dir, _safe_key(key))
+
+    def read_threads(self, key: str) -> dict[str, list[dict[str, Any]]]:
+        """The reply-thread map of *key*'s sidecar (``{mid: [reply, ...]}``).
+
+        A missing sidecar reads as empty. Unreadable bytes -- torn JSON, a wrong
+        shape -- raise :class:`ThreadStoreUnreadable` instead of reading as empty,
+        because the one caller that writes would otherwise replace the damaged
+        file with an empty map and lose every reply it held. Rows and threads of
+        the wrong shape are dropped individually; only the document as a whole
+        refuses. Each retained row is NORMALIZED to the reply schema -- ``id``,
+        ``role``, ``content``, ``ts``, all strings -- and nothing else: the file
+        sits beside the transcript under the data home, so a field an agent or
+        an older writer put there must never reach the dashboard through the
+        detail response's spread. A row missing ``id``, ``role`` or ``content``
+        is dropped. Every retained string is cut at the writer's own bound
+        (:data:`THREAD_REPLY_CONTENT_MAX_CHARS`, :data:`THREAD_REPLY_FIELD_MAX_CHARS`),
+        a thread keeps its NEWEST :data:`THREADS_MAX_REPLIES_PER_THREAD` rows
+        and the map stops at :data:`THREADS_MAX_REPLIES_PER_SIDECAR` rows in file
+        order, so what the file holds never decides what the gateway holds.
+        """
+        path = self.threads_sidecar_path(key)
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as exc:
+            raise ThreadStoreUnreadable(f"thread sidecar unreadable: {path}") from exc
+        threads = raw.get("threads") if isinstance(raw, dict) else None
+        if not isinstance(threads, dict):
+            raise ThreadStoreUnreadable(f"thread sidecar has no threads map: {path}")
+        out: dict[str, list[dict[str, Any]]] = {}
+        budget = THREADS_MAX_REPLIES_PER_SIDECAR
+        for mid, replies in threads.items():
+            if budget <= 0:
+                break
+            if not isinstance(mid, str) or len(mid) > THREAD_REPLY_FIELD_MAX_CHARS:
+                continue
+            if not isinstance(replies, list):
+                continue
+            rows = [_thread_reply_row(r) for r in replies if isinstance(r, dict)]
+            kept = [r for r in rows if r is not None][-THREADS_MAX_REPLIES_PER_THREAD:]
+            kept = kept[: min(len(kept), budget)]
+            budget -= len(kept)
+            out[mid] = kept
+        return out
+
+    def thread_transcript_identity(self, key: str) -> str | None:
+        """The transcript's ``created_at`` metadata, or ``None`` when absent.
+
+        The identity :meth:`append_thread_reply` checks a reply against; read at
+        admission, before any await, and handed back at the write.
+        """
+        created = self.get_metadata(key).get("created_at")
+        return created if isinstance(created, str) and created else None
+
+    def append_thread_reply(
+        self,
+        key: str,
+        mid: str,
+        reply: dict[str, Any],
+        *,
+        max_replies: int,
+        max_total: int,
+        expected_created_at: str | None = None,
+    ) -> str:
+        """Append *reply* to the thread on *mid* in *key*'s sidecar.
+
+        Returns ``"ok"``, ``"full"`` (the thread already holds *max_replies*),
+        ``"sidecar_full"`` (the sidecar already holds *max_total* replies across
+        every thread -- the whole-file bound, since the panel reads the file
+        whole and a per-thread cap alone leaves it unbounded in the number of
+        threads), ``"missing"`` (no transcript for *key*), or ``"replaced"``
+        (the transcript is not the one the reply was admitted against), or
+        ``"unflushed"`` (the transcript holds no row with ``meta.mid == mid``).
+        Every check runs under the lock so nothing can change between it and
+        the write. The identity is the metadata line's ``created_at`` -- minted
+        when a transcript is created, carried through verbatim by a rewrite --
+        so a member chat deleted and recreated under its deterministic key
+        while a turn was in flight is told apart from the chat the reply
+        belongs to, exactly as ``chat_persistence`` tells "deleted and
+        recreated" apart. Callers capture it with
+        :meth:`thread_transcript_identity` at admission and pass it back here.
+        The parent's ``meta.mid`` must ALWAYS be on disk: a thread is durable
+        only through the row it hangs off, and a parent that exists only in the
+        slot's memory window (a reply the slot has not flushed yet) would leave
+        the thread unreachable if the process died before the flush -- so such
+        a reply is refused as ``"unflushed"`` and the caller says "try again in
+        a moment". The same check is what tells a replacement apart for a
+        legacy transcript with no ``created_at`` (a replacement never carries
+        the old chat's message ids). The read-modify-write runs
+        under :meth:`_locked` -- the same lock
+        :meth:`delete_session` unlinks the sidecar under -- and refuses when the
+        transcript is gone, for the reason :meth:`set_cached_intent_summary`
+        gives: a turn holds no lock while its model call is in flight, and an
+        unconditional write landing after a delete would recreate the sidecar
+        and resurrect a conversation the user was told is gone. Raises
+        :class:`ThreadStoreUnreadable` on a damaged sidecar (never overwritten)
+        and :class:`HistoryLockTimeout` when the lock cannot be taken. Blocking;
+        callers run it off the event loop.
+        """
+        with self._locked(key):
+            if not self._path(key).exists():
+                return "missing"
+            if expected_created_at is not None:
+                current = self.thread_transcript_identity(key)
+                if current is not None and current != expected_created_at:
+                    return "replaced"
+            if not self._transcript_holds_mid(key, mid):
+                return "replaced" if expected_created_at is None else "unflushed"
+            threads = self.read_threads(key)
+            if sum(len(r) for r in threads.values()) >= max_total:
+                return "sidecar_full"
+            replies = threads.setdefault(mid, [])
+            if len(replies) >= max_replies:
+                return "full"
+            replies.append(reply)
+            path = self.threads_sidecar_path(key)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write(path, json.dumps({"version": 1, "threads": threads}))
+            return "ok"
+
+    def _transcript_holds_mid(self, key: str, mid: str) -> bool:
+        """Whether *key*'s transcript on disk has a row with ``meta.mid == mid``.
+
+        Read through the chained projection, the same corpus the thread routes
+        look a parent up in. Called under :meth:`_locked` by
+        :meth:`append_thread_reply`; the projection takes only its own in-process
+        index lock, so this is the read-inside-the-lock pattern the metadata
+        rewrites already use.
+        """
+        for row in self.read_messages_chained(key):
+            meta = row.get("meta") if isinstance(row, dict) else None
+            if isinstance(meta, dict) and meta.get("mid") == mid:
+                return True
+        return False
 
     def _intent_summary_cache_path(self, key: str) -> Path:
         """Sidecar path for a session's cached intent-structured summary.

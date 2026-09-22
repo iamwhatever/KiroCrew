@@ -68,6 +68,22 @@ export const DECISIONS_COMPACTION_POINT = 'compaction.keep'
 export const DECISIONS_MEMORY_POINT = 'memory.recall'
 
 /**
+ * The point that decides whether an auto-nudge tick needs to wake its owning
+ * session at all.
+ *
+ * Named here beside the others for the same reason: the strip reader dispatches on
+ * the record's own `point`, so a second spelling anywhere would be a record nobody
+ * renders.
+ *
+ * Unlike the five above, this one is not asked on a chat turn. It is asked on a
+ * TIMER, on whichever session armed the loop, and the answer decides whether that
+ * session runs a turn. So its own verdict is surfaced where it happens -- one
+ * transcript notice per verdict on the owning session -- and this constant is what
+ * lets the card name the point and the strip recognise its record.
+ */
+export const DECISIONS_NUDGE_WAKE_POINT = 'nudge.wake'
+
+/**
  * Config path of the sampling share. One of the four `decisions.*` values the
  * config PATCH accepts, beside the three `model_route` tiers; the address and the
  * credential are deliberately not among them.
@@ -231,6 +247,20 @@ export interface DecisionsView {
    */
   memoryText: boolean
   /**
+   * Whether the owner consented to sending WAKE EVIDENCE — the transcript tail and
+   * pull-request readings the `nudge.wake` judge screens a tick against.
+   *
+   * Its own field on the same fail-closed terms as `toolArgs`, and NOT read off
+   * `compaction`: that scope was reviewed as the session's own transcript at a
+   * compaction the owner's agent asked for, while this one sends rows from sessions
+   * the loop merely WATCHES, on a timer, with no turn of the owner's in between.
+   *
+   * The card needs it to draw the switch's current position. Without it the switch
+   * reads false forever and can only ever send `true`, so the owner could grant this
+   * egress and never withdraw it.
+   */
+  nudgeEvidence: boolean
+  /**
    * The prior-conversation CEILING the owner reviewed, in characters.
    *
    * From the KEYSTONE, not from `config.json`. The two differ exactly when an agent
@@ -260,6 +290,7 @@ const UNSUPPORTED: DecisionsView = {
   toolArgs: false,
   compaction: false,
   memoryText: false,
+  nudgeEvidence: false,
   historyBudget: 0,
   points: [],
 }
@@ -311,6 +342,7 @@ export function readConsent(body: unknown): Omit<DecisionsView, 'bucket' | 'poin
       toolArgs: false,
       compaction: false,
       memoryText: false,
+      nudgeEvidence: false,
       historyBudget: 0,
     }
   }
@@ -331,6 +363,10 @@ export function readConsent(body: unknown): Omit<DecisionsView, 'bucket' | 'poin
   // An exact `true` on the same terms again: a recalled memory is text the agent wrote
   // down in an earlier conversation, so neither scope beside this one stands for it.
   const memoryText = root.memory_text === true
+  // An exact `true` on the same terms as the three above. Read separately from
+  // `compaction` on purpose: that yes covered the owner's OWN transcript at their own
+  // agent's compaction, and this one covers rows from sessions the loop watches.
+  const nudgeEvidence = root.nudge_evidence === true
   // A whole non-negative number or nothing: an older gateway omits the field, and a
   // value nobody can read back as a budget is not one. 0 either way, which is the
   // shipped default and the least that can leave.
@@ -345,6 +381,7 @@ export function readConsent(body: unknown): Omit<DecisionsView, 'bucket' | 'poin
     toolArgs,
     compaction,
     memoryText,
+    nudgeEvidence,
     historyBudget,
   }
 }

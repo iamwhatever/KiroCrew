@@ -4080,6 +4080,10 @@
           "api_key": "secret://TYPESAFE_API_KEY",
           "model": "jev-latest",
           "timeout_ms": 1000
+        },
+        "nudge_wake": {
+          "provider": "auto",
+          "quiet_streak_floor": 0
         }
       }
     },
@@ -4217,6 +4221,51 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": 1000
+    },
+    {
+      "path": "decisions.nudge_wake",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Wake judge",
+      "help": "Which lane answers the automation-loop wake judge, and how long it may keep a loop quiet before one fires anyway.",
+      "hasChildren": true,
+      "enumValues": null,
+      "defaultValue": {
+        "provider": "auto",
+        "quiet_streak_floor": 0
+      }
+    },
+    {
+      "path": "decisions.nudge_wake.provider",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Provider lane",
+      "help": "Which lane answers the judge. 'auto', the default, takes the Jev lane when the Decisions keystone consents for the configured endpoint and the model-provider lane otherwise, so a machine with no Jev key still gets a judge once that lane ships. 'jev' always asks Jev, which needs the main Decisions switch and the nudge_evidence scope. 'llm' names the model provider the session already uses, which would need neither, because it adds no destination and no data class beyond that session -- but that lane is NOT part of this build, so 'llm' resolves to the same consent check 'jev' makes and a machine with no Jev key keeps a plain timer. Selecting it buys nothing here; it is spelled so the preference survives the lane arriving. An unrecognised value reads as 'auto': a typo in a lane preference must not decide whether a loop is delivered.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": "auto"
+    },
+    {
+      "path": "decisions.nudge_wake.quiet_streak_floor",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Quiet ticks before firing anyway",
+      "help": "How many QUIET verdicts in a row a loop may collect before the next tick fires regardless, so a judge that is wrong about a subject costs a late turn rather than silence. 0, the default, means inherit the shipped floor -- the same number the typed probe path uses, spelled once in the loop engine so the two cannot drift. A negative value also reads as inherit, and a value above the engine's ceiling is clamped down to it: config.json is writable by an auto-approved agent shell, so a floor no loop ever reaches must not become a second, undocumented way to silence a watch. The clamp lives with the ceiling, in the engine, for the same reason the default does.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": 0
     },
     {
       "path": "watchdog",

@@ -5866,6 +5866,61 @@ class DecisionProviderConfig:
 
 
 @dataclass
+class NudgeWakeConfig:
+    """``decisions.nudge_wake`` -- the wake judge's two knobs.
+
+    The judge screens an automation loop's ticks: it reads what the loop's targets
+    produced since the last tick and answers QUIET or fire, so a patrol with
+    nothing to report costs no turn. NEITHER key here arms it. What arms it is the
+    ``nudge.wake`` point consented on the Decisions card plus a loop carrying its
+    own ``judge`` brief, so both fields below are shape rather than permission --
+    the same reason ``DecisionsConfig`` carries no ``enabled``.
+
+    Both numbers the judge bounds itself by -- the shipped quiet floor and the
+    ceiling on it -- are spelled in the loop engine, not here, because the engine's
+    probe path already answers the same question and two literals would be two
+    things to keep in step. So this section carries a SENTINEL for the floor and the
+    engine resolves it.
+    """
+
+    provider: str = field(
+        default="auto",
+        metadata=_meta(
+            "Provider lane",
+            "Which lane answers the judge. 'auto', the default, takes the Jev lane "
+            "when the Decisions keystone consents for the configured endpoint and "
+            "the model-provider lane otherwise, so a machine with no Jev key still "
+            "gets a judge once that lane ships. 'jev' always asks Jev, which needs "
+            "the main Decisions switch and the nudge_evidence scope. 'llm' names the "
+            "model provider the session already uses, which would need neither, "
+            "because it adds no destination and no data class beyond that session -- "
+            "but that lane is NOT part of this build, so 'llm' resolves to the same "
+            "consent check 'jev' makes and a machine with no Jev key keeps a plain "
+            "timer. Selecting it buys nothing here; it is spelled so the preference "
+            "survives the lane arriving. "
+            "An unrecognised value reads as 'auto': a typo in a lane preference must "
+            "not decide whether a loop is delivered.",
+        ),
+    )
+    quiet_streak_floor: int = field(
+        default=0,
+        metadata=_meta(
+            "Quiet ticks before firing anyway",
+            "How many QUIET verdicts in a row a loop may collect before the next "
+            "tick fires regardless, so a judge that is wrong about a subject costs a "
+            "late turn rather than silence. 0, the default, means inherit the shipped "
+            "floor -- the same number the typed probe path uses, spelled once in the "
+            "loop engine so the two cannot drift. A negative value also reads as "
+            "inherit, and a value above the engine's ceiling is clamped down to it: "
+            "config.json is writable by an auto-approved agent shell, so a floor no "
+            "loop ever reaches must not become a second, undocumented way to silence "
+            "a watch. The clamp lives with the ceiling, in the engine, for the same "
+            "reason the default does.",
+        ),
+    )
+
+
+@dataclass
 class DecisionsConfig:
     """Decision seam (``src/kiro_crew/decisions/``). Off by default.
 
@@ -5936,6 +5991,14 @@ class DecisionsConfig:
         default_factory=DecisionProviderConfig,
         metadata=_meta("Provider", "Where decisions are sent and what they may cost."),
     )
+    nudge_wake: NudgeWakeConfig = field(
+        default_factory=NudgeWakeConfig,
+        metadata=_meta(
+            "Wake judge",
+            "Which lane answers the automation-loop wake judge, and how long it may "
+            "keep a loop quiet before one fires anyway.",
+        ),
+    )
 
     @classmethod
     def from_raw(cls, section: object) -> "DecisionsConfig":
@@ -5985,6 +6048,29 @@ class DecisionsConfig:
             ),
         )
 
+        raw_nudge = section.get("nudge_wake")
+        raw_nudge = raw_nudge if isinstance(raw_nudge, dict) else {}
+        raw_lane = raw_nudge.get("provider")
+        nudge_wake = NudgeWakeConfig(
+            # Lowercased here so the SAVED config says what is in force, the same
+            # reason ``bucket`` is clamped here: an operator who wrote "Jev" should see
+            # the value the lane resolver actually matches on come back. An
+            # unrecognised lane is kept as written rather than rewritten to "auto" --
+            # the resolver already reads anything it does not know as "auto", and
+            # rewriting a typo would hide it from the person who made it.
+            provider=(
+                raw_lane.strip().lower()
+                if isinstance(raw_lane, str) and raw_lane.strip()
+                else NudgeWakeConfig.provider
+            ),
+            # Absent, malformed and negative all read as 0, which the engine resolves
+            # to its shipped floor. The ceiling is NOT clamped here: it is the engine's
+            # own constant, and importing it would invert this module's dependency on
+            # the loop engine (which imports ``config.loader`` at module scope). The
+            # engine clamps on every read, so an over-large value never takes effect.
+            quiet_streak_floor=_safe_int(raw_nudge.get("quiet_streak_floor", 0), 0, 0),
+        )
+
         return cls(
             # Clamped here as well as in the gate. The gate clamps because it
             # must never trust a value it did not parse; clamping here is what
@@ -6017,6 +6103,7 @@ class DecisionsConfig:
             # against the provider's advertised list at routing time.
             model_route=coerce_model_route(section.get("model_route")),
             provider=provider,
+            nudge_wake=nudge_wake,
         )
 
 

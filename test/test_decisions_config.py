@@ -31,14 +31,48 @@ class TestDefaults:
     def test_no_field_here_is_a_switch(self):
         """The arm/impl/points vocabulary is retired, and ``enabled`` never lands
         here: config.json is agent-writable, so consent is the keystone's. Every
-        field is a bound or an address -- nothing here grants egress."""
+        field is a bound or an address -- nothing here grants egress.
+
+        ``nudge_wake`` is held to the same rule. Its two fields are an address
+        (which provider lane answers the wake judge) and a bound (how many quiet
+        verdicts may pass before a tick fires anyway). Neither arms anything: the
+        Jev lane still needs the keystone switch AND the ``nudge_evidence`` scope,
+        checked by the seam, and the judge only runs at all for a loop carrying its
+        own brief.
+        """
         from dataclasses import fields
 
         assert {f.name for f in fields(DecisionsConfig)} == {
             "bucket",
             "history_budget_chars",
             "model_route",
+            "nudge_wake",
             "provider",
+        }
+
+    def test_no_nested_section_here_is_a_switch_either(self):
+        """The rule above has to hold one level down, or it guards nothing.
+
+        A subsection is where a switch would hide most easily, so the field names of
+        every nested section are pinned too. Adding one here is the same deliberate
+        act as adding a top-level field: name it, and say which of the two kinds it
+        is.
+        """
+        from dataclasses import fields, is_dataclass
+
+        # Resolved off an INSTANCE, not off ``f.type``: this module is compiled with
+        # ``from __future__ import annotations``, so a field's declared type is the
+        # string "NudgeWakeConfig" and ``is_dataclass`` on it is False -- which would
+        # make this assertion pass against an empty map and guard nothing.
+        config = DecisionsConfig()
+        nested = {
+            f.name: {sub.name for sub in fields(getattr(config, f.name))}
+            for f in fields(DecisionsConfig)
+            if is_dataclass(getattr(config, f.name))
+        }
+        assert nested == {
+            "provider": {"endpoint", "api_key", "model", "timeout_ms"},
+            "nudge_wake": {"provider", "quiet_streak_floor"},
         }
 
     def test_no_prior_conversation_is_sent_by_default(self):
@@ -107,7 +141,13 @@ class TestMigrationFromThePreviewSpelling:
         from dataclasses import asdict
 
         saved = asdict(DecisionsConfig.from_raw({"preview": True, "points": {"a": {"arm": "off"}}}))
-        assert set(saved) == {"bucket", "history_budget_chars", "model_route", "provider"}
+        assert set(saved) == {
+            "bucket",
+            "history_budget_chars",
+            "model_route",
+            "nudge_wake",
+            "provider",
+        }
         assert "arm" not in json.dumps(saved)
         assert "enabled" not in json.dumps(saved)
 

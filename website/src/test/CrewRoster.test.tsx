@@ -315,8 +315,8 @@ describe('crew roster — memory ownership notice', () => {
     // so the page-level notice is not readable from here — the tooltip is the
     // only place this caveat reaches a user who is mid-edit.
     expect(within(sheet).getAllByTitle(TIP)).toHaveLength(1)
-    const memory = within(sheet).getByText(/This member keeps its current memory \(V1\)\./)
-    expect(memory).toHaveTextContent(/^This member keeps its current memory \(V1\)\. Member memory \(V2\) is only available when creating a new crew member\.$/)
+    const memory = within(sheet).getByText(/This crewmate keeps its current memory \(V1\)\./)
+    expect(memory).toHaveTextContent(/^This crewmate keeps its current memory \(V1\)\. Its own memory \(V2\) is only available when creating a new crewmate\.$/)
     expect(within(sheet).queryByText(/This member cannot return to its previous memory/)).toBeNull()
   })
 
@@ -1414,13 +1414,13 @@ describe('avatar editor entry — discoverability (issue #9103)', () => {
     const sheet = await screen.findByRole('dialog', { name: 'Add crew member' })
     expect(screen.getByRole('heading', { name: 'Add crew member' })).toBeInTheDocument()
     // The body keeps the same word: the section heading and the triggers
-    // helper say "member", not "agent", so the form never renames the thing
-    // one field in.
+    // helper say "member" / "crewmate", not "agent", so the form never renames
+    // the thing one field in (the launch vocabulary for hints is "crewmate").
     expect(within(sheet).getByRole('heading', { name: 'What this member uses' })).toBeInTheDocument()
     expect(within(sheet).queryByRole('heading', { name: 'What this agent uses' })).toBeNull()
-    expect(within(sheet).getByText(/hand work to this member/)).toBeInTheDocument()
-    expect(within(sheet).getByText(/The starting setup this member uses/)).toBeInTheDocument()
-    expect(within(sheet).getByText(/no member color/)).toBeInTheDocument()
+    expect(within(sheet).getByText(/hand work to this crewmate/)).toBeInTheDocument()
+    expect(within(sheet).getByText(/The starting setup this crewmate copies/)).toBeInTheDocument()
+    expect(within(sheet).getByText(/no crewmate color/)).toBeInTheDocument()
     expect(within(sheet).queryByText(/this agent/)).toBeNull()
     await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent(/^\?tab=crews$/))
   })

@@ -94,7 +94,7 @@ interface AgentUpdatePayload {
 
 /** The stored spelling for "no per-agent pin, inherit the next tier down". The
  *  select shows this as a real option; the backend normalizes it back to ''. */
-const INHERIT_MODEL = 'auto'
+export const INHERIT_MODEL = 'auto'
 
 /** Which crew the editor dialog is pointed at. `null` = closed. */
 /** `origin` records WHERE a create was asked for: the Crew Members roster's
@@ -255,7 +255,7 @@ function WorkspaceForm({
   )
 }
 
-function WorkspaceModal({
+export function WorkspaceModal({
   open,
   workspaceOptions,
   onCreated,
@@ -266,7 +266,11 @@ function WorkspaceModal({
   onCreated: (name: string) => void
   onClose: () => void
 }) {
-  /* Kept MOUNTED and driven by `open`, rather than conditionally rendered.
+  /* Also mounted by the Crewmates page's New crewmate dialog
+     (`pages/members/NewCrewmateDialog.tsx`), whose Advanced section offers the
+     same "new workspace" entry as the editor.
+
+     Kept MOUNTED and driven by `open`, rather than conditionally rendered.
      Radix tracks dismissable layers in a global stack, and tearing this whole
      subtree out the instant it closes skipped the layer's own deregistration —
      the editor underneath was then left believing it was no longer the top
@@ -286,8 +290,10 @@ function WorkspaceModal({
   )
 }
 
-/** One labelled control in the editor panel, with an optional explainer. */
-function Field({ label, hint, info, children }: { label: string; hint?: string; info?: string; children: React.ReactNode }) {
+/** One labelled control in the editor panel, with an optional explainer. Also the
+ *  frame around every field of the Crewmates page's New crewmate dialog
+ *  (`pages/members/NewCrewmateDialog.tsx`), so the two forms share one frame. */
+export function Field({ label, hint, info, children }: { label: string; hint?: string; info?: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
       <span className="flex items-center gap-1.5 text-[11px] text-muted uppercase tracking-wider font-medium">
@@ -384,13 +390,17 @@ export function TemplateField({ label, options, value, onChange, subject, editLa
   )
 }
 
-export function WorkspaceField({ options, value, onChange, onNewWorkspace, subject }: {
+export function WorkspaceField({ options, value, onChange, onNewWorkspace, subject, hint }: {
   options: string[]; value: string; onChange: (v: string) => void; onNewWorkspace: () => void; subject: FormSubject
+  /** Replaces the subject's default hint. The defaults are EDIT-time copy
+   *  ("new chats start fresh in the new folder"); a create form has no old
+   *  chats to worry about, so it passes its own line. */
+  hint?: string
 }) {
   return (
     <Field
       label={i18nT('pages.kiroCrewAgentsPage.workspace_2')}
-      hint={subject === 'member' ? i18nT('pages.kiroCrewAgentsPage.workspace_hint_member') : i18nT('pages.kiroCrewAgentsPage.isolated_memory_and_files_for_this_crew')}
+      hint={hint ?? (subject === 'member' ? i18nT('pages.kiroCrewAgentsPage.workspace_hint_member') : i18nT('pages.kiroCrewAgentsPage.isolated_memory_and_files_for_this_crew'))}
       info={i18nT('pages.kiroCrewAgentsPage.bindings_preview_info')}
     >
       <SimpleSelect

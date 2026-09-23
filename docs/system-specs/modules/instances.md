@@ -2177,7 +2177,30 @@ be the defect the field replaces.
 
 ### 16.6 Seam
 
-`FargateEngine.register()` (`src/kiro_crew/cloud/fargate_engine.py`) is a
-deliberate no-op: a launched task is not added to this registry, so a `fargate`
-record is created by hand (Settings, the API or the CLI) with the task's ECS
-target. Tracked in #12511.
+`FargateLaunchEngine.register()` (`src/kiro_crew/cloud/fargate_engine.py`) adds a
+launched task to this registry, so a `fargate` record is normally created by the
+launch rather than by hand; Settings, the API and the CLI remain the way to add one
+for a task launched some other way, or to repair a launch whose registration did
+not complete.
+
+The launcher holds a task ARN, which this registry does not address, so `register`
+resolves a target before it writes one: it polls `ecs:DescribeTasks` for the crew
+container's `runtimeId` (`REGISTER_TARGET_POLL_SECONDS`, up to
+`REGISTER_TARGET_TIMEOUT_SECONDS`, returning on the first read that carries one),
+composes `ecs:<cluster>_<task-id>_<runtime-id>` from the task's own coordinates,
+and reads it back through `split_ecs_target` before handing it to
+`connect.register_instance(connection_method="fargate", remote_port=FRONT_PORT)`.
+The port is passed explicitly because `register_instance` defaults to the stock
+dashboard port, which nothing in the task listens on (§16's field notes).
+
+Idempotency is `register_instance`'s own: it matches an existing record by
+`ssm_target`, so registering the same task twice updates that record in place and
+preserves its id, allocated local port, TTL and `was_connected`.
+
+Every failure raises `launch_job.RegistrationUnavailable`, which the launcher
+records on the connect step while still reporting the task as launched -- a stopped
+task, a task ECS no longer lists, a denied `ecs:DescribeTasks`, a container still
+starting at the budget, and a registry write that declined. The task is running and
+billing in all of them, so the remedy is to add it here by hand or tear it down, and
+a launch reported as failed would describe the one thing that did work as the thing
+that broke.

@@ -96,6 +96,24 @@ class LaunchCancelled(Exception):
     then rolled back rather than abandoned."""
 
 
+class RegistrationUnavailable(Exception):
+    """An engine's ``register`` could not add the crew, and the launch stands anyway.
+
+    The narrow case where a failed connect step must NOT fail the launch: the
+    compute exists, it is billing, and the only thing missing is the registry row.
+    An engine raises this when it can say that positively — the crew list can be
+    repaired from Settings, the running crew cannot be recovered from a red card
+    that reports the launch itself as failed.
+
+    Distinct from every other exception a register may raise, which stays fatal.
+    ``RealLaunchEngine.register`` raises a plain ``RuntimeError`` on purpose: for
+    the EC2 lane a missing row means an instance the user was told about and
+    cannot see, so that one fails the launch. The difference is not which lane it
+    is, it is whether the engine knows the launch is sound; this type is how an
+    engine says so, and an engine that raises anything else has not said it.
+    """
+
+
 # ── State model ──────────────────────────────────────────────────────────────
 @dataclass
 class SigninPrompt:
@@ -1010,20 +1028,35 @@ def run_launch(
         # 4) Register in the Instances hub so it appears under "Your crews"
         _check_cancel()
         s = _activate(STEP_CONNECT)
-        engine.register(
-            instance_id=job.instance_id, tag=job.tag, profile=job.profile, region=job.region
-        )
-        s.state = STEP_DONE
-        # The step ran -- the instance is registered -- but a green check with no
-        # words beside "Connect" reads as ready to use. Say what is still owed
-        # when the sign-in did not confirm; the card's icon shows a waiting key in
-        # that case and this is the sentence under it.
-        s.detail = (
-            "Added to Your crews."
-            if job.signin_detected
-            else "Added to Your crews. Finish the Kiro sign-in before connecting."
-        )
-        store.save(job)
+        registration_error = ""
+        try:
+            engine.register(
+                instance_id=job.instance_id, tag=job.tag, profile=job.profile, region=job.region
+            )
+        except RegistrationUnavailable as exc:
+            # The engine has said the launch itself is sound and only the registry
+            # row is missing. Recording it on the step and continuing is the whole
+            # point: the compute exists and is billing, so reporting the LAUNCH as
+            # failed would put a red card over a running crew and leave its owner
+            # with nothing to act on, while the real remedy — add it under Remote
+            # crew, or tear it down — needs the launch to be reported as it is.
+            # Every other exception propagates and fails the launch, unchanged.
+            registration_error = str(exc)
+            s.state = STEP_FAILED
+            s.detail = registration_error[:400]
+            store.save(job)
+        else:
+            s.state = STEP_DONE
+            # The step ran -- the instance is registered -- but a green check with no
+            # words beside "Connect" reads as ready to use. Say what is still owed
+            # when the sign-in did not confirm; the card's icon shows a waiting key in
+            # that case and this is the sentence under it.
+            s.detail = (
+                "Added to Your crews."
+                if job.signin_detected
+                else "Added to Your crews. Finish the Kiro sign-in before connecting."
+            )
+            store.save(job)
 
         if signin_error:
             # Registered (visible, recoverable) but NOT done: the crew is running
@@ -1033,6 +1066,14 @@ def run_launch(
             job.status = FAILED
             store.save(job)
             return job
+
+        if registration_error:
+            # DONE, because the task launched -- which is what this status reports.
+            # The reason is carried on ``job.error`` as well as on the step so it
+            # reaches a reader who sees only the job: a launch that finished with
+            # the crew absent from the list is the one outcome here that still
+            # needs a human to do something.
+            job.error = registration_error[:400]
 
         job.status = DONE
         store.save(job)

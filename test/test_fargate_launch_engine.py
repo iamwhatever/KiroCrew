@@ -51,6 +51,7 @@ from kiro_crew.cloud.fargate_engine import (
     plan_teardown,
 )
 from kiro_crew.cloud.launch_job import LaunchEngine, SigninHandle
+from kiro_crew.instances.validation import split_ecs_target
 
 TAG = "kc-a1b2c3"
 ARN = "arn:aws:ecs:us-west-2:111122223333:task/crews/1111111111111111"
@@ -61,6 +62,59 @@ STARTED_BY = "kirocrew-cloud/kc-a1b2c3"
 #: module refuses to spell this key itself because the module that writes the tag
 #: owns it, so every test hands it over the same way production code must.
 LAUNCH_TAG_KEY = "kirocrew:launch"
+
+#: A task id and ARN the REGISTRY can address, which ``ARN`` above deliberately is
+#: not: an ECS target's task id is 32 hex characters and the shared fixture's is
+#: sixteen, so a target built from it is refused by ``split_ecs_target``. Kept
+#: separate rather than widening ``ARN``, because that short id is what
+#: :meth:`~TestAwaitingTheRegistrationTarget.test_coordinates_that_do_not_form_a_target_are_refused_here`
+#: uses to show the refusal, and the two facts would otherwise cancel out.
+TASK_ID = "0123456789abcdef0123456789abcdef"
+RUNTIME_ID = f"{'a' * 32}-1234567890"
+REGISTRABLE_ARN = f"arn:aws:ecs:us-west-2:111122223333:task/crews/{TASK_ID}"
+EXPECTED_TARGET = f"ecs:crews_{TASK_ID}_{RUNTIME_ID}"
+
+
+def _task(last_status: str, *, task_arn: str = REGISTRABLE_ARN, **over: object) -> dict:
+    """One ``DescribeTasks`` entry, as the API shapes it."""
+    entry: dict = {"taskArn": task_arn, "lastStatus": last_status}
+    entry.update(over)
+    return entry
+
+
+def _running_task(*, task_arn: str = REGISTRABLE_ARN) -> dict:
+    return _task(
+        "RUNNING",
+        task_arn=task_arn,
+        containers=[{"name": "crew", "runtimeId": RUNTIME_ID}],
+    )
+
+
+def _stopped_task(stopped_reason: str) -> dict:
+    return _task("STOPPED", stoppedReason=stopped_reason, containers=[])
+
+
+def _never_sleep(_seconds: object) -> None:
+    """A poll sleep that must not happen: these reads end on their first answer."""
+    raise AssertionError("the wait slept when the first read already settled it")
+
+
+def _patch_describe(monkeypatch, answers: list) -> None:
+    """Serve *answers* to successive ``describe_task`` calls, last one repeating.
+
+    Patched at the engine's own read rather than at the AWS chokepoint because
+    what is under test is the POLL -- how many reads it takes and when it stops --
+    and a scripted sequence is the only way to express a task that is
+    PROVISIONING and then RUNNING. ``None`` entries stand for the task ECS no
+    longer lists, which is what ``describe_task`` returns for it.
+    """
+    remaining = list(answers)
+
+    def _describe_task(self, *, task_arn: str, profile: str, region: str):
+        entry = remaining.pop(0) if len(remaining) > 1 else remaining[0]
+        return None if entry is None else fargate_engine.sighting_from_task(entry)
+
+    monkeypatch.setattr(FargateLaunchEngine, "describe_task", _describe_task)
 
 
 def _marked(tag: str = TAG, **over: object) -> TaskSighting:
@@ -263,16 +317,263 @@ def test_signin_time_identity_center_target_is_a_programming_error_guard() -> No
     assert handle.error == ""
 
 
-def test_register_is_a_silent_no_op() -> None:
-    """``register`` carries no exit criteria; registry visibility is out of scope.
+def test_register_resolves_a_target_and_registers_the_fargate_crew(monkeypatch) -> None:
+    """A launched task lands in the registry, so the crew is switchable at once.
 
-    A raise would fail an otherwise-successful launch, because ``run_launch`` calls
-    the step unconditionally.
+    ``provision`` hands over a task ARN, which the registry cannot address. This
+    asserts the three things the record must carry -- the ECS target composed from
+    the DescribeTasks read, the ``fargate`` method, and the port the task
+    definition publishes -- because each one wrong is its own silent failure: a
+    stale target connects to nothing, ``ssm`` is refused by the registry, and the
+    EC2 lane's default port forwards to a port the container does not listen on.
     """
-    assert (
-        FargateLaunchEngine().register(instance_id=ARN, tag=TAG, profile="p", region="us-west-2")
-        is None
+    calls: list[dict] = []
+
+    def _register_instance(target, **kw):
+        calls.append({"target": target, **kw})
+        return "inst-1"
+
+    monkeypatch.setattr(fargate_engine.connect, "register_instance", _register_instance)
+    _patch_describe(monkeypatch, [_running_task()])
+
+    FargateLaunchEngine(_spec()).register(
+        instance_id=REGISTRABLE_ARN, tag=TAG, profile="p", region="us-west-2"
     )
+
+    assert len(calls) == 1, calls
+    assert calls[0]["target"] == EXPECTED_TARGET
+    assert calls[0]["connection_method"] == "fargate"
+    assert calls[0]["remote_port"] == fargate.FRONT_PORT
+    assert TAG in calls[0]["name"]
+    # split_ecs_target is the registry's own reader: a target it rejects would be
+    # refused at reg.add as a traceback about a string nobody typed.
+    assert split_ecs_target(calls[0]["target"]) == (
+        "crews",
+        TASK_ID,
+        RUNTIME_ID,
+    )
+
+
+def test_register_raises_registration_unavailable_when_the_registry_declines(
+    monkeypatch,
+) -> None:
+    """``register_instance`` returns None for BOTH "feature absent" and "write
+    raised". Ignoring it would report the crew as added while it is absent."""
+    monkeypatch.setattr(fargate_engine.connect, "register_instance", lambda *a, **k: None)
+    _patch_describe(monkeypatch, [_running_task()])
+
+    with pytest.raises(lj.RegistrationUnavailable) as caught:
+        FargateLaunchEngine(_spec()).register(
+            instance_id=REGISTRABLE_ARN, tag=TAG, profile="p", region="us-west-2"
+        )
+    # The message has to carry what a human needs to finish by hand.
+    assert REGISTRABLE_ARN in str(caught.value)
+    assert EXPECTED_TARGET in str(caught.value)
+
+
+def test_register_never_reaches_the_registry_without_a_target(monkeypatch) -> None:
+    """A task that stopped before its container started has nothing to register.
+
+    The raise is :class:`RegistrationUnavailable` and not a bare error because the
+    launch is sound: the task ran. Registering a target with an empty runtime id
+    would write a record whose tunnel can never open.
+    """
+    reached: list[object] = []
+    monkeypatch.setattr(
+        fargate_engine.connect, "register_instance", lambda *a, **k: reached.append(a)
+    )
+    _patch_describe(monkeypatch, [_stopped_task("CannotPullContainerError: manifest unknown")])
+
+    with pytest.raises(lj.RegistrationUnavailable) as caught:
+        FargateLaunchEngine(_spec()).register(
+            instance_id=REGISTRABLE_ARN, tag=TAG, profile="p", region="us-west-2"
+        )
+    assert reached == []
+    assert "CannotPullContainerError" in str(caught.value)
+
+
+class TestTheRuntimeIdIsReadFromTheCrewContainer:
+    """``runtimeId`` is the one ECS target field ``RunTask`` does not answer with."""
+
+    def test_it_is_matched_by_container_name_not_position(self) -> None:
+        """A sidecar added to the task definition must not move the crew's channel.
+
+        Position is not identity: ``containers[0]`` would point every registration
+        at the sidecar's runtime id, and the tunnel would forward to whatever that
+        container listens on.
+        """
+        sighting = fargate_engine.sighting_from_task(
+            {
+                "taskArn": REGISTRABLE_ARN,
+                "lastStatus": "RUNNING",
+                "containers": [
+                    {"name": "log-router", "runtimeId": "f" * 32 + "-99"},
+                    {"name": fargate.CREW_CONTAINER_NAME, "runtimeId": RUNTIME_ID},
+                ],
+            }
+        )
+        assert sighting.runtime_id == RUNTIME_ID
+
+    def test_a_task_with_no_containers_yet_reports_no_runtime_id(self) -> None:
+        """PROVISIONING carries no containers, and absent is not an error."""
+        sighting = fargate_engine.sighting_from_task(
+            {"taskArn": REGISTRABLE_ARN, "lastStatus": "PROVISIONING"}
+        )
+        assert sighting.runtime_id == ""
+
+    def test_a_started_container_without_a_runtime_id_reports_none(self) -> None:
+        """Present-but-empty and absent are the same to the caller: no target."""
+        sighting = fargate_engine.sighting_from_task(
+            {
+                "taskArn": REGISTRABLE_ARN,
+                "lastStatus": "RUNNING",
+                "containers": [{"name": fargate.CREW_CONTAINER_NAME}],
+            }
+        )
+        assert sighting.runtime_id == ""
+
+
+class TestAwaitingTheRegistrationTarget:
+    """The bounded DescribeTasks poll, and a named reason for every way it ends."""
+
+    def test_it_polls_until_the_container_reports_a_runtime_id(self, monkeypatch) -> None:
+        """A Fargate task is PROVISIONING for tens of seconds. Reading once would
+        make registration fail for every launch that is not already warm."""
+        slept: list[int] = []
+        monkeypatch.setattr(fargate_engine, "_sleep", slept.append)
+        _patch_describe(
+            monkeypatch,
+            [
+                _task("PROVISIONING", containers=[]),
+                _task("PENDING", containers=[{"name": fargate.CREW_CONTAINER_NAME}]),
+                _running_task(),
+            ],
+        )
+
+        target, reason = FargateLaunchEngine(_spec()).await_registration_target(
+            task_arn=REGISTRABLE_ARN, profile="p", region="us-west-2"
+        )
+
+        assert (target, reason) == (EXPECTED_TARGET, "")
+        # Two waits for three reads: it returns ON the answer, never after a
+        # further sleep, so a task that starts fast costs only the time it took.
+        assert slept == [
+            fargate_engine.REGISTER_TARGET_POLL_SECONDS,
+            fargate_engine.REGISTER_TARGET_POLL_SECONDS,
+        ]
+
+    def test_a_stopped_task_ends_the_wait_and_quotes_ecs(self, monkeypatch) -> None:
+        """The cause lives in ``stoppedReason`` -- an image it could not pull, a
+        secret it could not read -- so it is carried, not summarised away."""
+        monkeypatch.setattr(fargate_engine, "_sleep", _never_sleep)
+        _patch_describe(monkeypatch, [_stopped_task("ResourceInitializationError: secret")])
+
+        target, reason = FargateLaunchEngine(_spec()).await_registration_target(
+            task_arn=REGISTRABLE_ARN, profile="p", region="us-west-2"
+        )
+
+        assert target == ""
+        assert "ResourceInitializationError: secret" in reason
+
+    def test_a_stopped_task_with_no_reason_still_says_so(self, monkeypatch) -> None:
+        """ECS does not always give one, and an empty tail would read as truncated."""
+        monkeypatch.setattr(fargate_engine, "_sleep", _never_sleep)
+        _patch_describe(monkeypatch, [_stopped_task("")])
+
+        _target, reason = FargateLaunchEngine(_spec()).await_registration_target(
+            task_arn=REGISTRABLE_ARN, profile="p", region="us-west-2"
+        )
+        assert "ECS gave no reason" in reason
+
+    def test_a_task_ecs_no_longer_lists_is_not_rounded_to_a_state(self, monkeypatch) -> None:
+        """``describe_task`` answers None for a task ECS has dropped. There is no
+        crew left to register, and guessing 'running' would write a dead target."""
+        monkeypatch.setattr(fargate_engine, "_sleep", _never_sleep)
+        _patch_describe(monkeypatch, [None])
+
+        target, reason = FargateLaunchEngine(_spec()).await_registration_target(
+            task_arn=REGISTRABLE_ARN, profile="p", region="us-west-2"
+        )
+        assert target == ""
+        assert "no longer lists" in reason
+
+    def test_a_denied_read_is_reported_as_itself(self, monkeypatch) -> None:
+        """An AccessDenied on ecs:DescribeTasks is a permission to fix, not a
+        task state. The AWS error names the caller ARN, so it is carried."""
+        monkeypatch.setattr(fargate_engine, "_sleep", _never_sleep)
+
+        def _raise(**_kw):
+            raise AWSError(
+                "AccessDeniedException: user arn:aws:iam::1:user/x", action="ecs:DescribeTasks"
+            )
+
+        monkeypatch.setattr(FargateLaunchEngine, "describe_task", lambda self, **kw: _raise(**kw))
+
+        target, reason = FargateLaunchEngine(_spec()).await_registration_target(
+            task_arn=REGISTRABLE_ARN, profile="p", region="us-west-2"
+        )
+        assert target == ""
+        assert "AccessDeniedException" in reason
+
+    def test_the_budget_is_a_ceiling_and_its_expiry_is_named(self, monkeypatch) -> None:
+        """A task still starting at the budget is the one case where looking again
+        later works, so the reason says that instead of implying the task failed."""
+        slept: list[int] = []
+        monkeypatch.setattr(fargate_engine, "_sleep", slept.append)
+        # Always PROVISIONING: the poll can only end on the budget.
+        monkeypatch.setattr(
+            FargateLaunchEngine,
+            "describe_task",
+            lambda self, **kw: fargate_engine.sighting_from_task(
+                _task("PROVISIONING", containers=[])
+            ),
+        )
+
+        target, reason = FargateLaunchEngine(_spec()).await_registration_target(
+            task_arn=REGISTRABLE_ARN, profile="p", region="us-west-2"
+        )
+
+        assert target == ""
+        assert str(fargate_engine.REGISTER_TARGET_TIMEOUT_SECONDS) in reason
+        assert "Remote crew" in reason
+        # Bounded, and bounded by the documented budget rather than by a count
+        # that happens to match it.
+        assert sum(slept) == fargate_engine.REGISTER_TARGET_TIMEOUT_SECONDS
+        assert set(slept) == {fargate_engine.REGISTER_TARGET_POLL_SECONDS}
+
+    def test_an_arn_naming_no_cluster_falls_back_to_the_spec(self, monkeypatch) -> None:
+        """The short ARN format carries no cluster. The spec's is the only other
+        source, and the read must still be attempted rather than refused."""
+        monkeypatch.setattr(fargate_engine, "_sleep", _never_sleep)
+        short = f"arn:aws:ecs:us-west-2:111122223333:task/{TASK_ID}"
+        monkeypatch.setattr(
+            FargateLaunchEngine,
+            "describe_task",
+            lambda self, **kw: fargate_engine.sighting_from_task(_running_task(task_arn=short)),
+        )
+
+        target, reason = FargateLaunchEngine(_spec()).await_registration_target(
+            task_arn=short, profile="p", region="us-west-2"
+        )
+        assert (target, reason) == (EXPECTED_TARGET, "")
+
+    def test_coordinates_that_do_not_form_a_target_are_refused_here(self, monkeypatch) -> None:
+        """The registry requires a 32-hex task id. A cluster or id that cannot be
+        read back is refused where the reason can name the parts."""
+        monkeypatch.setattr(fargate_engine, "_sleep", _never_sleep)
+        # ARN with a SHORT task id: well-formed as an ARN, not as an ECS target.
+        stumpy = "arn:aws:ecs:us-west-2:111122223333:task/crews/1111111111111111"
+        monkeypatch.setattr(
+            FargateLaunchEngine,
+            "describe_task",
+            lambda self, **kw: fargate_engine.sighting_from_task(_running_task(task_arn=stumpy)),
+        )
+
+        target, reason = FargateLaunchEngine(_spec()).await_registration_target(
+            task_arn=stumpy, profile="p", region="us-west-2"
+        )
+        assert target == ""
+        assert "1111111111111111" in reason
 
 
 # ── Ownership: the marker gates, the identifier names ────────────────────────

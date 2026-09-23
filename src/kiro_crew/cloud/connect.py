@@ -254,14 +254,20 @@ def register_instance(
     profile: str = "",
     region: str = "",
     remote_port: int = DEFAULT_REMOTE_DASHBOARD_PORT,
+    connection_method: str = "ssm",
 ) -> Optional[str]:
     """Register the box in the Instances registry for the /instances dashboard.
 
-    Registers with the **native SSM transport**: ``connection_method="ssm"`` and
-    the EC2 instance id as ``ssm_target`` (plus the launcher's ``profile`` /
-    ``region``). The dashboard then tunnels, refreshes tokens, and self-heals the
-    box over AWS SSM Session Manager — no SSH key, no inbound port, and no
-    hand-edited ``~/.ssh/config``.
+    Registers with an **SSM-transport method**: ``connection_method`` (``"ssm"``,
+    the default, or ``"fargate"``) and *instance_id* as ``ssm_target`` (plus the
+    launcher's ``profile`` / ``region``). The dashboard then tunnels, refreshes
+    tokens, and self-heals the box over AWS SSM Session Manager — no SSH key, no
+    inbound port, and no hand-edited ``~/.ssh/config``.
+
+    *instance_id* is whatever the chosen method addresses: an EC2 instance id for
+    ``"ssm"``, an ECS task target (``ecs:<cluster>_<task-id>_<runtime-id>``) for
+    ``"fargate"``. It is the registry's own ``ssm_target`` either way, which is
+    why one parameter carries both and why the idempotency below matches on it.
 
     Best-effort: returns the registered instance id, or None if the Instances
     feature isn't available. Idempotent per box: a re-launch updates the prior
@@ -285,7 +291,7 @@ def register_instance(
             if instance_id in (existing.ssm_target, existing.ssh_host):
                 reg.update(
                     existing.id,
-                    connection_method="ssm",
+                    connection_method=connection_method,
                     ssm_target=instance_id,
                     aws_profile=profile,
                     aws_region=region,
@@ -295,7 +301,7 @@ def register_instance(
                 return existing.id
         inst = reg.add(
             name=name,
-            connection_method="ssm",
+            connection_method=connection_method,
             ssm_target=instance_id,
             aws_profile=profile,
             aws_region=region,

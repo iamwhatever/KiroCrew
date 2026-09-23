@@ -51,15 +51,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Sequence
 
-from kiro_crew.cloud import aws, sizes
+from kiro_crew.cloud import aws, connect, sizes
 from kiro_crew.cloud.ec2 import MANAGED_TAG_KEY
 from kiro_crew.cloud.fargate import (
     CPU_ARCHITECTURES,
+    CREW_CONTAINER_NAME,
     CREW_TAG_KEY,
     EPHEMERAL_STORAGE_MAX_GIB,
     EPHEMERAL_STORAGE_MIN_GIB,
     FARGATE_MEMORY_FOR_CPU,
     FINGERPRINT_TAG_KEY,
+    FRONT_PORT,
     LAUNCH_TAG_KEY,
     MANAGED_TAG_VALUE,
     STARTED_BY_MAX,
@@ -77,6 +79,7 @@ from kiro_crew.cloud.fargate import (
     validated_region,
 )
 from kiro_crew.cloud.login_target import KiroLoginTarget
+from kiro_crew.instances.validation import split_ecs_target
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +171,20 @@ class TaskSighting:
     stopped_at: Optional[float] = None
     stopped_reason: str = ""
 
+    #: The crew container's ``runtimeId``, or ``""`` when the read did not carry
+    #: one. It is the third field of an SSM ECS target
+    #: (``ecs:<cluster>_<task-id>_<runtime-id>``) and so the one coordinate a
+    #: registry record for this task cannot be composed without. ECS assigns it
+    #: when the container starts, so a task that has not reached ``RUNNING``
+    #: reports no container and this stays empty --
+    #: which is why :meth:`FargateLaunchEngine.await_registration_target` polls
+    #: rather than reading once. Read from the container named
+    #: :data:`~kiro_crew.cloud.fargate.CREW_CONTAINER_NAME` rather than from
+    #: ``containers[0]``: position is not identity, and a sidecar added to the
+    #: task definition later would silently move the crew off index zero and
+    #: point every registration at the wrong container's channel.
+    runtime_id: str = ""
+
     @property
     def is_running(self) -> bool:
         """Whether this task is still consuming money.
@@ -199,7 +216,23 @@ def sighting_from_task(task: Mapping[str, Any]) -> TaskSighting:
         desired_status=str(task.get("desiredStatus") or ""),
         stopped_at=_first_moment(task.get("stoppedAt")),
         stopped_reason=str(task.get("stoppedReason") or ""),
+        runtime_id=_crew_runtime_id(task),
     )
+
+
+def _crew_runtime_id(task: Mapping[str, Any]) -> str:
+    """The crew container's ``runtimeId`` in *task*, or ``""``.
+
+    Matched by container NAME, so the value belongs to the container the front
+    port is published on and not to whichever container ECS listed first. A task
+    whose containers ECS has not created yet, and one whose crew container has no
+    runtime id yet, both answer ``""``: absent and not-yet-assigned are the same
+    thing to the caller, which is that no target can be composed.
+    """
+    for container in task.get("containers") or []:
+        if str(container.get("name") or "") == CREW_CONTAINER_NAME:
+            return str(container.get("runtimeId") or "")
+    return ""
 
 
 def split_task_arn(task_arn: str) -> tuple[str, str]:
@@ -486,6 +519,30 @@ def _started_by_for(tag: str) -> str:
 #: ``DescribeTasks`` call fail, and with it every launch, on exactly the busy or
 #: leaking cluster a lifetime sweep exists for.
 DESCRIBE_TASKS_MAX = 100
+
+
+#: How long :meth:`FargateLaunchEngine.await_registration_target` waits for the
+#: crew container to report a ``runtimeId``, and how often it re-reads, in seconds.
+#:
+#: Both numbers are READ from the sibling lane rather than chosen. ``cloud/wizard.py``
+#: waits ``_SSM_READY_TIMEOUT_SECS = 180`` at ``_SSM_READY_POLL_SECS = 6`` for a
+#: freshly started EC2 instance's SSM agent to come online, which is the same
+#: question asked of the other lane: a launch has created compute and is waiting
+#: for the channel the dashboard reaches it through. A Fargate task reaches
+#: ``RUNNING`` in well under that once the image is pulled, and a pull from a cold
+#: cache is the case the margin is for.
+#:
+#: The budget is a CEILING, not a delay: the poll returns on the first read that
+#: carries a runtime id, so a task that starts in twenty seconds costs twenty.
+#: Spending it inside ``register`` is consistent with the step it belongs to --
+#: ``run_launch`` is documented blocking on a worker thread, and the EC2 lane's
+#: ``provision`` already blocks for minutes on CloudFormation.
+REGISTER_TARGET_TIMEOUT_SECONDS = 180
+REGISTER_TARGET_POLL_SECONDS = 6
+
+# Indirection so tests can patch out the poll sleep, as ``cloud.ssm`` and
+# ``cloud.wizard`` do for theirs.
+_sleep = time.sleep
 
 
 #: How long a task may run before this launcher stops it, in seconds.
@@ -1189,17 +1246,135 @@ class FargateLaunchEngine:
             )
         return FargateSigninHandle(task_arn=instance_id)
 
-    def register(self, *, instance_id: str, tag: str, profile: str, region: str) -> None:
-        """Do nothing, deliberately.
+    def await_registration_target(
+        self, *, task_arn: str, profile: str, region: str
+    ) -> tuple[str, str]:
+        """``(ssm_target, "")`` once the crew container reports a runtime id, else
+        ``("", reason)``.
 
-        ``instances/registry.py`` closes its transport set to ``("ssh", "ssm")``
-        and raises for anything outside it, so a Fargate crew cannot be registered
-        without changing registry code. Registry visibility is out of scope for
-        this phase and ``register`` carries no exit criteria, so a no-op is the
-        specified behaviour rather than a gap --
-        and it is a no-op rather than a raise because ``run_launch`` calls this step
-        unconditionally and a raise would fail a launch that otherwise succeeded.
+        The new AWS read this lane needs. ``RunTask`` answers with a task ARN and
+        nothing else, so the launcher holds two of an SSM ECS target's three
+        fields; the third, the container's ``runtimeId``, exists only once ECS has
+        started the container, and ``DescribeTasks`` is the only place it is
+        readable. This polls that read on :data:`REGISTER_TARGET_POLL_SECONDS` up
+        to :data:`REGISTER_TARGET_TIMEOUT_SECONDS` and returns on the first
+        answer that carries one.
+
+        Never raises, and returns a REASON rather than a bare failure, because
+        every way this ends badly is a different thing for its owner to do and the
+        launch is sound in all of them:
+
+        * the task stopped before the container started -- ECS's own
+          ``stoppedReason`` is quoted, since that is where the cause is (an image
+          it could not pull, a secret it could not read);
+        * ECS does not list the task -- :meth:`describe_task` answers ``None``,
+          and the launch has nothing left to register;
+        * the read is denied or otherwise fails -- the ``ecs:DescribeTasks``
+          error, which names the caller ARN on an AccessDenied;
+        * the budget ran out with the task still starting -- the honest answer,
+          and the one case where simply looking again later works.
+
+        The composed target goes through :func:`split_ecs_target`, the registry's
+        own reader, before being returned. A cluster or id that cannot be read
+        back is refused HERE, where the reason can name the parts, rather than at
+        ``reg.add``, whose refusal would arrive as a launch-time traceback about a
+        string the operator never typed.
         """
+        cluster, task_id = split_task_arn(task_arn)
+        if not cluster and self._spec is not None:
+            cluster = self._spec.placement.cluster
+        if not cluster or not task_id:
+            return "", f"{task_arn!r} names no cluster and task id to build an ECS target from"
+        waited = 0
+        while True:
+            try:
+                sighting = self.describe_task(task_arn=task_arn, profile=profile, region=region)
+            except aws.AWSError as exc:
+                return "", f"could not read the task to register it: {exc}"
+            if sighting is None:
+                return "", "ECS no longer lists this task, so there is no running crew to add"
+            if sighting.runtime_id:
+                target = f"ecs:{cluster}_{task_id}_{sighting.runtime_id}"
+                if split_ecs_target(target) is None:
+                    return "", (
+                        f"the task's own coordinates do not form an ECS target "
+                        f"(cluster {cluster!r}, task {task_id!r}, "
+                        f"runtime {sighting.runtime_id!r})"
+                    )
+                return target, ""
+            if not sighting.is_running:
+                detail = sighting.stopped_reason.strip() or "ECS gave no reason"
+                return "", (
+                    f"the task stopped before its container started, so it has no "
+                    f"connection target: {detail}"
+                )
+            if waited >= REGISTER_TARGET_TIMEOUT_SECONDS:
+                return "", (
+                    f"the task was still {sighting.last_status or 'starting'} after "
+                    f"{REGISTER_TARGET_TIMEOUT_SECONDS}s, so its container had no runtime "
+                    f"id to connect to yet. It may still come up -- add it under Remote "
+                    f"crew once `kirocrew cloud status` shows it running."
+                )
+            _sleep(REGISTER_TARGET_POLL_SECONDS)
+            waited += REGISTER_TARGET_POLL_SECONDS
+
+    def register(self, *, instance_id: str, tag: str, profile: str, region: str) -> None:
+        """Add the launched task to the Instances registry, so the crew is switchable.
+
+        *instance_id* is the task ARN ``provision`` returned. The registry
+        addresses a Fargate crew by ECS target instead, so this resolves one from
+        the other through :meth:`await_registration_target` and registers THAT as
+        the record's ``ssm_target``, with ``connection_method="fargate"`` and
+        ``remote_port`` the port the task definition publishes
+        (:data:`~kiro_crew.cloud.fargate.FRONT_PORT`) -- not
+        ``register_instance``'s default, which is the EC2 lane's remote dashboard
+        port and would forward the tunnel to a port nothing in the container
+        listens on.
+
+        Idempotency is ``register_instance``'s own and is not re-implemented here:
+        it matches an existing record by ``ssm_target``, so registering the same
+        task twice (a retried launch job on one task) updates that record in place
+        and preserves its id, allocated local port and sticky connect intent.
+
+        Raises :class:`~kiro_crew.cloud.launch_job.RegistrationUnavailable` for
+        every failure, which is what keeps a launch that got this far reported as
+        launched. There is a running, billing task in all of them, and the remedy
+        is the same: add it under Remote crew, or tear it down. Failing the launch
+        instead would put a red card over a live crew and describe the one thing
+        that DID work as the thing that broke.
+        """
+        # Deferred: ``launch_job`` is the orchestration contract this exception
+        # belongs to and it reaches this module's graph through ``cloud.config``,
+        # so a module-scope import here would close a cycle. The engine is
+        # constructed lazily anyway (``platform.defaults.engine_for``).
+        from kiro_crew.cloud.launch_job import RegistrationUnavailable
+
+        target, reason = self.await_registration_target(
+            task_arn=instance_id, profile=profile, region=region
+        )
+        if not target:
+            raise RegistrationUnavailable(
+                f"The crew is running (task {instance_id}) but could not be added to your "
+                f"crews: {reason}"
+            )
+        registered = connect.register_instance(
+            target,
+            name=f"Kiro Crew Cloud ({tag})",
+            profile=profile,
+            region=region,
+            remote_port=FRONT_PORT,
+            connection_method="fargate",
+        )
+        if registered is None:
+            # ``register_instance`` is best-effort BY CONTRACT: None means both
+            # "the Instances feature is absent" and "the registry write raised",
+            # logged rather than propagated. Ignoring it would report the crew as
+            # added while it is absent from the list.
+            raise RegistrationUnavailable(
+                f"The crew is running (task {instance_id}, target {target}) but could not be "
+                f"added to your crews. It is billing -- add it under Remote crew with the "
+                f"fargate connection method, or tear it down, so it does not sit idle."
+            )
 
     def _sightings(
         self,
@@ -1279,11 +1454,13 @@ class FargateLaunchEngine:
     def describe_task(self, *, task_arn: str, profile: str, region: str) -> Optional[TaskSighting]:
         """Read ONE task by ARN: the lane's own answer to "is this crew still up".
 
-        This is the read the dashboard's cloud panel shows for a Fargate launch.
-        The EC2 lane's panel keys liveness on the Instances registry, which a
-        teardown updates; this lane registers nothing (see :meth:`register`), so
-        the registry cannot speak for its task and ECS is the only source that
-        can. ``DescribeTasks`` is that source, through the same
+        This is the read the dashboard's cloud panel shows for a Fargate launch,
+        and the read :meth:`await_registration_target` polls to compose the crew's
+        ECS target. The EC2 lane's panel keys liveness on the Instances registry,
+        which a teardown updates. A registry record addresses this lane's crew by
+        a target naming ONE task, so it identifies the task a launch started and
+        cannot report that task's current state; ECS is the only source that can.
+        ``DescribeTasks`` is that source, through the same
         :func:`sighting_from_task` mapping the cluster walk uses.
 
         The cluster is taken from the ARN when the ARN carries it (the long

@@ -278,6 +278,65 @@ class TestRunLaunch:
         assert out.step(lj.STEP_PROVISION).state == lj.STEP_DONE
         assert not any(c[0] == "teardown" for c in eng.calls)
 
+    def test_registration_unavailable_keeps_the_launch_done_and_says_why(self, tmp_path):
+        """The Fargate lane's case: the task launched, only the row is missing.
+
+        DONE is what reports the task as launched, which is the thing that actually
+        happened and the thing its owner is paying for. The reason is on the connect
+        step AND on the job, because a red card over a running crew would leave them
+        with nothing to act on while the crew keeps billing.
+        """
+        s = _store(tmp_path)
+        job = s.create(profile="dev", region="us-east-1", size_key="balanced")
+        eng = FakeEngine(
+            handle=FakeHandle(already=True),
+            register_exc=lj.RegistrationUnavailable(
+                "The crew is running (task arn:aws:ecs:...:task/crews/abc) but could not be "
+                "added to your crews: the task was still PROVISIONING after 180s"
+            ),
+        )
+        out = lj.run_launch(job, s, eng)
+
+        assert out.status == lj.DONE
+        assert out.step(lj.STEP_PROVISION).state == lj.STEP_DONE
+        assert out.step(lj.STEP_CONNECT).state == lj.STEP_FAILED
+        assert "could not be added to your crews" in out.step(lj.STEP_CONNECT).detail
+        assert "PROVISIONING" in out.error
+        # The crew exists: a launch that got this far is never rolled back.
+        assert not any(c[0] == "teardown" for c in eng.calls)
+
+    def test_a_registration_failure_never_claims_the_crew_was_added(self, tmp_path):
+        """The connect step's detail is the sentence under the card's icon. Leaving
+        the success wording on a failed registration would tell the user to look for
+        a crew that is not in the list."""
+        s = _store(tmp_path)
+        job = s.create(profile="dev", region="us-east-1", size_key="balanced")
+        eng = FakeEngine(
+            handle=FakeHandle(already=True),
+            register_exc=lj.RegistrationUnavailable("ECS no longer lists this task"),
+        )
+        out = lj.run_launch(job, s, eng)
+        assert "Added to Your crews" not in out.step(lj.STEP_CONNECT).detail
+
+    def test_a_refused_signin_still_outranks_a_registration_failure(self, tmp_path):
+        """Two things went wrong and only one is reported as the job's status. The
+        sign-in refusal wins: it means the crew serves chats under an identity the
+        launch did not ask for, which is worse than being absent from a list.
+        """
+        s = _store(tmp_path)
+        job = s.create(profile="dev", region="us-east-1", size_key="balanced")
+        handle = FakeHandle(already=True)
+        handle.error = "this box holds a session for a different identity"
+        eng = FakeEngine(
+            handle=handle,
+            register_exc=lj.RegistrationUnavailable("ECS no longer lists this task"),
+        )
+        out = lj.run_launch(job, s, eng)
+
+        assert out.status == lj.FAILED
+        assert "different identity" in out.error
+        assert out.step(lj.STEP_CONNECT).state == lj.STEP_FAILED
+
     def test_cancel_before_provision(self, tmp_path):
         s = _store(tmp_path)
         job = s.create(profile="dev", region="us-east-1", size_key="balanced")

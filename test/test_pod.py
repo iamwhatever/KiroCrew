@@ -4793,6 +4793,167 @@ class TestRuntimeHelpers:
             rt.mint_token(PodConfig.load(), "ghost", "1h")
 
 
+class TestMintRefusalNamesTheGateThatRefused:
+    """A 403 from ``/api/token/local`` must report the gate that actually refused.
+
+    The endpoint refuses at three independent gates and says which one in the body
+    it already sends. Listing candidates instead sends the operator to a remedy for
+    a gate that did not refuse -- and the remedy the two secret/transport gates want
+    is a recreate, whose ``down`` half reclaims the pod's HOME. So the owner-
+    provenance refusal, which no recreate can clear, must not carry it, and every
+    message that does carry it must state what it costs.
+    """
+
+    def _refused(self, body: bytes | None) -> object:
+        import io
+        import urllib.error
+
+        fp = io.BytesIO(body) if body is not None else None
+
+        def _raise(*a: object, **k: object) -> None:
+            raise urllib.error.HTTPError(
+                "http://127.0.0.1/api/token/local",
+                403,
+                "Forbidden",
+                {},  # type: ignore[arg-type]
+                fp,  # type: ignore[arg-type]
+            )
+
+        return _raise
+
+    def _mint(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        body: bytes | None,
+    ) -> str:
+        """Drive the real ``mint_token`` unix-socket path to its 403 branch."""
+        monkeypatch.setenv("KIROCREW_POD_ROOT", str(tmp_path))
+        c = PodConfig.load()
+        home = c.home_dir("demo")
+        home.mkdir(parents=True)
+        (home / ".local_secret").write_text("s3cret")
+        monkeypatch.setattr(rt, "IS_WINDOWS", False)
+        monkeypatch.setattr(rt, "port_owner", lambda *a, **k: rt.OWNER_POD)
+        monkeypatch.setattr(rt, "_pod_recorded_pid", lambda cfg, name, port: 4242)
+        monkeypatch.setattr(rt, "unix_socket_urlopen", self._refused(body))
+        with pytest.raises(rt.PodError) as exc:
+            rt.mint_token(c, "demo", "1h")
+        return str(exc.value)
+
+    @staticmethod
+    def _recreate_cost_is_stated(message: str) -> bool:
+        """A message may name ``pod down`` only while stating what it deletes."""
+        return "pod down" not in message or "DELETES the pod's HOME" in message
+
+    def test_owner_refusal_is_named_and_not_blamed_on_transport_or_secret(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The gate that refuses a CALLER must not be reported as the other two.
+
+        This is the refusal a healthy, serving pod produces: the transport was
+        admitted and the secret accepted, so naming those two as the candidates
+        describes a pod whose state is fine and sends the operator to a recreate
+        that cannot change the verdict.
+        """
+        body = json.dumps(
+            {
+                "error": "The gateway could not verify this process as the local owner.",
+                "code": "member_owner_token_refused",
+            }
+        ).encode()
+        message = self._mint(tmp_path, monkeypatch, body)
+
+        assert "member_owner_token_refused" in message
+        assert "unverified-owner-process" in message  # the pod's own audit record
+        # The two causes that did NOT refuse are not offered as candidates.
+        assert "predates unix-socket admission" not in message
+        assert "stale" not in message
+        # And a recreate is not presented as the fix for a caller-provenance verdict.
+        assert "does NOT change this verdict" in message
+
+    def test_the_owner_refusal_never_recommends_deleting_the_pod(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``pod down`` reclaims the pod's HOME and cannot fix a caller verdict.
+
+        Pinned separately from the wording above because this is the destructive
+        half: a remedy that deletes a pod's data must never be printed for a
+        refusal it cannot repair, and if it is named at all its cost is stated.
+        """
+        body = json.dumps({"error": "no", "code": "member_owner_token_refused"}).encode()
+        message = self._mint(tmp_path, monkeypatch, body)
+
+        assert "kirocrew pod down demo && kirocrew pod up demo" not in message
+        assert self._recreate_cost_is_stated(message)
+
+    def test_transport_refusal_names_the_transport_and_prices_the_recreate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        body = json.dumps({"error": "loopback only", "code": "loopback_only"}).encode()
+        message = self._mint(tmp_path, monkeypatch, body)
+
+        assert "loopback_only" in message and "TRANSPORT" in message
+        assert "Update the pod's worktree" in message
+        assert self._recreate_cost_is_stated(message)
+        assert "DELETES the pod's HOME" in message
+
+    def test_secret_refusal_names_the_secret_and_prices_the_recreate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        body = json.dumps({"error": "invalid secret", "code": "invalid_secret"}).encode()
+        message = self._mint(tmp_path, monkeypatch, body)
+
+        assert "invalid_secret" in message and ".local_secret" in message
+        assert "TRANSPORT" not in message
+        assert self._recreate_cost_is_stated(message)
+        assert "DELETES the pod's HOME" in message
+
+    def test_a_codeless_body_sends_the_operator_to_the_audit_record(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without a code the honest answer is where the pod wrote the answer.
+
+        A gateway that answers 403 without one leaves three possible gates, so the
+        message names the record that distinguishes them instead of picking one.
+        """
+        message = self._mint(tmp_path, monkeypatch, json.dumps({"error": "nope"}).encode())
+
+        assert "no machine-readable cause" in message
+        assert "security_events.jsonl" in message
+        assert "non-loopback" in message and "unverified-owner-process" in message
+        assert "nope" in message  # the pod's own words are still relayed
+        assert self._recreate_cost_is_stated(message)
+
+    @pytest.mark.parametrize("body", [None, b"", b"<html>403</html>", b"[]"])
+    def test_an_unreadable_body_still_produces_a_refusal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: bytes | None
+    ) -> None:
+        """Reading the body must not be able to replace the 403 with a crash.
+
+        A missing file object, an empty body, HTML and valid JSON that is not an
+        object all reach the same reader, and a raise there would lose the refusal.
+        """
+        message = self._mint(tmp_path, monkeypatch, body)
+
+        assert "HTTP 403" in message
+        assert "no machine-readable cause" in message
+        assert self._recreate_cost_is_stated(message)
+
+    def test_the_no_fallback_guarantee_survives_the_rewrite(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The refusal still states that the secret was not retried over TCP.
+
+        That sentence is the security property of this path, not decoration: it
+        tells the operator the secret was never offered to whatever holds the port.
+        """
+        body = json.dumps({"error": "x", "code": "member_owner_token_refused"}).encode()
+        message = self._mint(tmp_path, monkeypatch, body)
+
+        assert "Not retried on 127.0.0.1:" in message
+
+
 class TestAuditEvents:
     @requires_posix_pod_lifecycle
     def test_down_emits_audit(self, monkeypatch: pytest.MonkeyPatch) -> None:

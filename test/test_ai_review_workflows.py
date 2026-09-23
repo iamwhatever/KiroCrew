@@ -6881,6 +6881,12 @@ class TestGptVerdictVisibility:
             "# changed author guard) fails these tests instead of hiding.\n"
             'if [ "$1" = "api" ] && [ "$2" = "--method" ] && [ "$3" = "PATCH" ]; then\n'
             '  printf \'%s\\n\' "$4" >> "$STUB_CALLS/patch-calls.txt"\n'
+            "  # Every attempt at the comment WRITE fails, so the retry is\n"
+            "  # visible in the recorded call count. Records no body: a write\n"
+            "  # that failed left nothing on the comment, and asserting on a\n"
+            "  # body the API never accepted is how a lost write reads as a\n"
+            "  # published one.\n"
+            '  if [ -n "${STUB_PATCH_FAIL:-}" ]; then exit 6; fi\n'
             '  for a in "$@"; do\n'
             '    case "$a" in body=*) printf \'%s\' "${a#body=}" > "$STUB_CALLS/patched-body.md";; esac\n'
             "  done\n"
@@ -6897,7 +6903,21 @@ class TestGptVerdictVisibility:
             "  exit 0\n"
             "fi\n"
             'if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then\n'
+            '  printf \'%s\\n\' "$3" >> "$STUB_CALLS/create-calls.txt"\n'
             "  shift 3\n"
+            '  if [ -n "${STUB_CREATE_FAIL:-}" ]; then\n'
+            "    # STUB_CREATE_LANDS emulates the lost-ack partial failure that\n"
+            "    # makes a create unsafe to repeat: GitHub ACCEPTS the POST, so\n"
+            "    # the comment now exists, but the CLI still reports failure.\n"
+            "    # The body is written into the finder fixture, so the step's own\n"
+            "    # confirmation query sees it through real jq.\n"
+            '    if [ -n "${STUB_CREATE_LANDS:-}" ] && [ "$1" = "--body-file" ]; then\n'
+            '      jq -n --arg b "$(cat "$2")" \\\n'
+            '        \'[{id:777,user:{login:"github-actions[bot]"},body:$b}]\' \\\n'
+            '        > "$FINDER_COMMENTS_FILE"\n'
+            "    fi\n"
+            "    exit 7\n"
+            "  fi\n"
             '  if [ "$1" = "--body-file" ]; then cp "$2" "$STUB_CALLS/created-body.md"; fi\n'
             "  exit 0\n"
             "fi\n"
@@ -6905,6 +6925,20 @@ class TestGptVerdictVisibility:
             encoding="utf-8",
         )
         gh_stub.chmod(0o755)
+
+        # `sleep` is an external command, so a shim earlier on PATH intercepts
+        # the retry backoff without a test-only knob in the workflow: the lanes
+        # keep their real production budget and these tests do not wait it out.
+        # Records each interval, so the SCHEDULE is assertable rather than just
+        # the attempt count.
+        sleep_stub = stub_dir / "sleep"
+        sleep_stub.write_text(
+            "#!/usr/bin/env bash\n"
+            'printf \'%s\\n\' "$1" >> "$STUB_CALLS/sleeps.txt"\n'
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        sleep_stub.chmod(0o755)
 
         script = _step_script(_workflow("codex-review.yml"), "Post/update review comment")
         script_file = tmp_path / "step.sh"
@@ -7366,6 +7400,27 @@ _GUARDED_LANES = [
 
 _GUARDED_LANE_PARAMS = [pytest.param(lane, id=lane["id"]) for lane in _GUARDED_LANES]
 
+# Every lane that publishes a review VERDICT into a marker comment, including
+# the two same-repo lanes that do not route through guarded_comment_upsert
+# (claude-review.yml and codex-review.yml). Spelled out rather than globbed for
+# the primitive's name: a lane that DROPS the write primitive must fail this
+# list, and a glob keyed on the primitive would silently stop measuring exactly
+# that lane.
+_VERDICT_PUBLISHING_LANES = (
+    ("claude-review.yml", "Post Opus 4.8 review summary"),
+    ("codex-review.yml", "Post/update review comment"),
+    ("design-review.yml", "Post design review summary"),
+    ("first-principles-review.yml", "Post first-principles review summary"),
+    ("fork-design-review.yml", "Post/update design review comment"),
+    ("fork-first-principles-review.yml", "Post/update first-principles review comment"),
+    ("fork-gpt-review.yml", "Post/update summary comment"),
+    ("fork-opus-review.yml", "Post/update summary comment"),
+    ("fork-security-scope-review.yml", "Post/update the scope review comment"),
+    ("fork-ux-review.yml", "Post UX review summary"),
+    ("security-scope-review.yml", "Post the scope verdict"),
+    ("ux-review.yml", "Post UX review summary"),
+)
+
 
 class TestReviewLaneVerdictVisibility:
     """No review lane may bury a posted verdict under an incomplete body.
@@ -7478,6 +7533,12 @@ class TestReviewLaneVerdictVisibility:
             "# changed author guard) fails these tests instead of hiding.\n"
             'if [ "$1" = "api" ] && [ "$2" = "--method" ] && [ "$3" = "PATCH" ]; then\n'
             '  printf \'%s\\n\' "$4" >> "$STUB_CALLS/patch-calls.txt"\n'
+            "  # Every attempt at the comment WRITE fails, so the retry is\n"
+            "  # visible in the recorded call count. Records no body: a write\n"
+            "  # that failed left nothing on the comment, and asserting on a\n"
+            "  # body the API never accepted is how a lost write reads as a\n"
+            "  # published one.\n"
+            '  if [ -n "${STUB_PATCH_FAIL:-}" ]; then exit 6; fi\n'
             '  for a in "$@"; do\n'
             '    case "$a" in body=*) printf \'%s\' "${a#body=}" > "$STUB_CALLS/patched-body.md";; esac\n'
             "  done\n"
@@ -7519,7 +7580,21 @@ class TestReviewLaneVerdictVisibility:
             "  exit 0\n"
             "fi\n"
             'if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then\n'
+            '  printf \'%s\\n\' "$3" >> "$STUB_CALLS/create-calls.txt"\n'
             "  shift 3\n"
+            '  if [ -n "${STUB_CREATE_FAIL:-}" ]; then\n'
+            "    # STUB_CREATE_LANDS emulates the lost-ack partial failure that\n"
+            "    # makes a create unsafe to repeat: GitHub ACCEPTS the POST, so\n"
+            "    # the comment now exists, but the CLI still reports failure.\n"
+            "    # The body is written into the finder fixture, so the step's own\n"
+            "    # confirmation query sees it through real jq.\n"
+            '    if [ -n "${STUB_CREATE_LANDS:-}" ] && [ "$1" = "--body-file" ]; then\n'
+            '      jq -n --arg b "$(cat "$2")" \\\n'
+            '        \'[{id:777,user:{login:"github-actions[bot]"},body:$b}]\' \\\n'
+            '        > "$FINDER_COMMENTS_FILE"\n'
+            "    fi\n"
+            "    exit 7\n"
+            "  fi\n"
             '  if [ "$1" = "--body-file" ]; then cp "$2" "$STUB_CALLS/created-body.md"; fi\n'
             "  exit 0\n"
             "fi\n"
@@ -7527,6 +7602,20 @@ class TestReviewLaneVerdictVisibility:
             encoding="utf-8",
         )
         gh_stub.chmod(0o755)
+
+        # `sleep` is an external command, so a shim earlier on PATH intercepts
+        # the retry backoff without a test-only knob in the workflow: the lanes
+        # keep their real production budget and these tests do not wait it out.
+        # Records each interval, so the SCHEDULE is assertable rather than just
+        # the attempt count.
+        sleep_stub = stub_dir / "sleep"
+        sleep_stub.write_text(
+            "#!/usr/bin/env bash\n"
+            'printf \'%s\\n\' "$1" >> "$STUB_CALLS/sleeps.txt"\n'
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        sleep_stub.chmod(0o755)
 
         script = _step_script(_workflow(lane["workflow"]), lane["step"])
         script_file = tmp_path / "step.sh"
@@ -7600,9 +7689,12 @@ class TestReviewLaneVerdictVisibility:
         assert not (calls / "patched-body.md").exists()
         assert not (calls / "created-body.md").exists()
         # Whether a comment exists is a gating input, so the read retries
-        # before the step concludes it could not be determined.
+        # before the step concludes it could not be determined -- on a budget
+        # that outlasts the failure it exists for. App-wide API exhaustion
+        # lasts minutes, so a few seconds of tolerance withholds a verdict the
+        # lane has already earned.
         reads = (calls / "comment-reads.txt").read_text(encoding="utf-8").splitlines()
-        assert len(reads) == 3, reads
+        assert len(reads) == 6, reads
         assert "comment lookup also failed" in result.stdout.decode()
 
     @pytest.mark.parametrize("lane", _GUARDED_LANE_PARAMS)
@@ -7648,10 +7740,17 @@ class TestReviewLaneVerdictVisibility:
 
         assert result.returncode == 0, result.stderr.decode()
         reads = (calls / "pr-head-reads.txt").read_text(encoding="utf-8").splitlines()
-        assert len(reads) == 3, reads
+        assert len(reads) == 6, reads
         assert not (calls / "patched-body.md").exists()
         assert not (calls / "created-body.md").exists()
-        assert "unreadable after 3 attempts" in result.stdout.decode()
+        stdout = result.stdout.decode()
+        assert "unreadable after 6 attempts" in stdout
+        # A withheld verdict is reported as an ANNOTATION, not as one line in a
+        # job log nobody opens. Withholding is the right call on an unreadable
+        # head, but a lane that withholds still concludes `success`, so the
+        # annotation is the only thing that tells a withheld verdict apart from
+        # a published one.
+        assert "::warning::Withholding" in stdout
 
     @pytest.mark.parametrize("lane", _GUARDED_LANE_PARAMS)
     def test_completed_verdict_still_replaces_the_comment(self, lane: dict, tmp_path: Path) -> None:
@@ -7917,14 +8016,17 @@ class TestReviewLaneVerdictVisibility:
         # Exactly two conditions withhold the write, and each names itself.
         assert 'if ! grep -Fq "$stamp $HEAD" "$out_file"; then' in canonical
         assert 'withhold="run for $HEAD produced no completed verdict"' in canonical
-        # BOTH gating reads retry a transient failure before deciding.
-        assert canonical.count("for attempt in 1 2 3; do") == 2
-        assert canonical.count('if [ "$attempt" -lt 3 ]; then') == 2
+        # BOTH gating reads retry a transient failure before deciding, on a
+        # budget that outlasts the failure they exist for: API exhaustion
+        # windows last minutes. Linear 5s backoff, ~75s per read.
+        assert canonical.count("for attempt in 1 2 3 4 5 6; do") == 2
+        assert canonical.count('if [ "$attempt" -lt 6 ]; then') == 2
+        assert canonical.count('sleep "$(( attempt * 5 ))"') == 2
         assert 'pr_head="$(gh api "repos/$REPO/pulls/$PR" --jq \'.head.sha\')"' in canonical
         # An unreadable head is NOT confirmed current: the destructive write
         # must not proceed on an unknown, so this arm withholds like the others.
         assert 'if [ -z "$pr_head" ]; then' in canonical
-        assert "unreadable after 3 attempts" in canonical
+        assert "unreadable after 6 attempts" in canonical
         assert 'elif [ "$pr_head" != "$HEAD" ]; then' in canonical
         assert 'withhold="$HEAD is no longer this PR\'s head ($pr_head)"' in canonical
         # A withheld write returns before reaching any PATCH: both no-touch
@@ -7938,6 +8040,193 @@ class TestReviewLaneVerdictVisibility:
         # A failed lookup on a COMPLETED verdict for the current head still
         # falls through to CREATE, never to silence.
         assert 'gh pr comment "$PR" --body-file "$out_file"' in canonical
+        # Every write inside the guard goes through the retrying primitive, and
+        # none of them is followed by an unconditional success line: `|| true`
+        # plus a hardcoded "Updated existing ..." echo reports a lost PATCH as
+        # a published verdict.
+        writes = [
+            line
+            for line in code_lines
+            if "gh api --method PATCH" in line or "gh pr comment " in line
+        ]
+        assert len(writes) == 3, writes
+        for line in writes:
+            assert "retry_comment_write" in line, line
+            assert "|| true" not in line, line
+
+    @pytest.mark.parametrize("lane", _GUARDED_LANE_PARAMS)
+    def test_a_lost_patch_is_retried_and_never_claimed_as_published(
+        self, lane: dict, tmp_path: Path
+    ) -> None:
+        # The lane HAS a completed verdict for the current head and is cleared
+        # to claim the slot, but the write itself fails. One attempt under
+        # `|| true` with an unconditional "Updated existing ..." echo leaves the
+        # marker pinned to a superseded head while the job log claims the
+        # opposite, and prepare-pr then refuses a PR whose every check passes.
+        calls, result = self._run_step(
+            lane,
+            tmp_path,
+            existing_body=self._verdict_body(lane, self.OLD),
+            kind="completed",
+            extra_env={"STUB_PATCH_FAIL": "1"},
+        )
+
+        # An unpublishable verdict is an infrastructure failure, not a BLOCK
+        # verdict, so it still must not fail an advisory lane's gate.
+        assert result.returncode == 0, result.stderr.decode()
+        # The write is retried on the gating reads' budget, not attempted once.
+        attempts = (calls / "patch-calls.txt").read_text(encoding="utf-8").splitlines()
+        assert len(attempts) == 6, attempts
+        # The backoff SCHEDULE, not just the count: five waits between six
+        # attempts, linear 5s, ~75s in total -- sized against exhaustion
+        # windows that last minutes rather than seconds.
+        waits = (calls / "sleeps.txt").read_text(encoding="utf-8").splitlines()
+        assert waits == ["5", "10", "15", "20", "25"], waits
+        # Nothing landed, so the stub recorded no accepted body.
+        assert not (calls / "patched-body.md").exists()
+        stdout = result.stdout.decode()
+        # The step does NOT claim to have updated the comment ...
+        assert "Updated existing" not in stdout
+        # ... and the loss is an annotation naming the head whose verdict is
+        # unpublished, so it is visible without opening the job log.
+        assert "::error::" in stdout
+        assert self.HEAD in stdout
+
+    @pytest.mark.parametrize("lane", _GUARDED_LANE_PARAMS)
+    def test_a_lost_create_is_retried_and_never_claimed_as_published(
+        self, lane: dict, tmp_path: Path
+    ) -> None:
+        # The same defect on the other write: with no existing comment the
+        # guard CREATES, and that call carries the identical risk of a lost
+        # write announced as a published one.
+        calls, result = self._run_step(
+            lane,
+            tmp_path,
+            existing_body=None,
+            kind="completed",
+            extra_env={"STUB_CREATE_FAIL": "1"},
+        )
+
+        assert result.returncode == 0, result.stderr.decode()
+        attempts = (calls / "create-calls.txt").read_text(encoding="utf-8").splitlines()
+        assert len(attempts) == 6, attempts
+        assert not (calls / "created-body.md").exists()
+        stdout = result.stdout.decode()
+        assert "Created new" not in stdout
+        assert "::error::" in stdout
+        assert self.HEAD in stdout
+
+    def test_write_primitive_is_byte_identical_across_every_publishing_lane(self) -> None:
+        # Same invariant as guarded_comment_upsert's, extended to the two
+        # same-repo lanes that do not route through it: the retry budget and
+        # the refusal to claim an unlanded write must not drift lane by lane.
+        bodies = set()
+        for workflow, step in _VERDICT_PUBLISHING_LANES:
+            script = _step_script(_workflow(workflow), step)
+            bodies.add(_shell_function(script, "retry_comment_write"))
+        assert len(bodies) == 1, (
+            "retry_comment_write must stay byte-identical across every lane "
+            "that publishes a verdict; edit all copies together"
+        )
+        canonical = bodies.pop()
+        code = [line for line in canonical.splitlines() if not line.lstrip().startswith("#")]
+        # Bounded: a permanently failing API must not hold an if:always() step
+        # open. Six attempts, 5s linear backoff, ~75s.
+        assert any("for attempt in 1 2 3 4 5 6; do" in line for line in code)
+        assert any('sleep "$(( attempt * 5 ))"' in line for line in code)
+        # The OUTCOME is returned, never swallowed: no `|| true` anywhere, and
+        # the caller decides what to print because only it knows which body it
+        # was publishing.
+        assert not any("|| true" in line for line in code)
+        assert any(line.strip() == "return 0" for line in code)
+        assert any(line.strip() == "return 1" for line in code)
+        # A repeat is gated on a confirmation read, and only from the second
+        # attempt: the first write has nothing to confirm against.
+        assert any('[ "$attempt" -gt 1 ] && [ -n "$confirm_marker" ]' in line for line in code)
+        # An unreadable confirmation STOPS rather than repeating a POST, which
+        # is the same rule the head-confirmation read follows: the destructive
+        # half must not proceed on an unknown.
+        assert "Cannot confirm whether the previous attempt landed" in canonical
+        # A marker that is already there means the previous attempt landed.
+        assert "A previous attempt did land" in canonical
+        # The confirmation selects the first id off a CAPTURED value, never via
+        # a `head -n1` inside the pipeline, which SIGPIPEs the api call under
+        # pipefail and misreads a good lookup as a failure.
+        assert not any("head -n1" in line for line in code)
+        assert any("| awk 'NR == 1'" in line for line in code)
+
+    @pytest.mark.parametrize(
+        ("workflow", "step"), _VERDICT_PUBLISHING_LANES, ids=[w for w, _ in _VERDICT_PUBLISHING_LANES]
+    )
+    def test_no_verdict_write_announces_a_success_it_did_not_get(
+        self, workflow: str, step: str
+    ) -> None:
+        # Diff-scoped by construction: only the VERDICT writes are covered.
+        # The early-exit notice writes in some of these steps (human-override
+        # notes, skip and no-contract notices) still carry the one-attempt
+        # `|| true` shape, and they sit BEFORE their step's `exit 0`, above the
+        # primitive's definition -- a separate defect with the same symptom,
+        # deliberately left to its own change rather than folded in here.
+        script = _step_script(_workflow(workflow), step)
+        body_writes = [
+            line
+            for line in script.splitlines()
+            if "--body-file" in line or "--field body=" in line
+            if not line.lstrip().startswith("#")
+            if "claude-summary.md" in line
+            or "codex-comment.md" in line
+            or "codex-merged-comment.md" in line
+            or '"$out_file"' in line
+        ]
+        assert body_writes, workflow
+        for line in body_writes:
+            assert "|| true" not in line, (workflow, line)
+
+    @pytest.mark.parametrize("lane", _GUARDED_LANE_PARAMS)
+    def test_a_create_whose_ack_was_lost_is_not_posted_again(
+        self, lane: dict, tmp_path: Path
+    ) -> None:
+        # A PATCH is idempotent, so repeating it is safe. A create is a POST and
+        # is not: GitHub can ACCEPT it and lose the ack, so a blind second
+        # attempt plants a SECOND marker comment. Every id lookup in these lanes
+        # selects one comment, so a later human override patches only that one
+        # while the duplicate keeps its own [BLOCK-MERGE] line, and pr_status.py
+        # stays blocked until somebody deletes the extra comment by hand. That is
+        # the same gate-stranding this change exists to remove, reached from the
+        # other side, so the retry confirms before it repeats.
+        calls, result = self._run_step(
+            lane,
+            tmp_path,
+            existing_body=None,
+            kind="completed",
+            extra_env={"STUB_CREATE_FAIL": "1", "STUB_CREATE_LANDS": "1"},
+        )
+
+        assert result.returncode == 0, result.stderr.decode()
+        creates = (calls / "create-calls.txt").read_text(encoding="utf-8").splitlines()
+        assert len(creates) == 1, creates
+        assert "A previous attempt did land" in result.stdout.decode()
+
+    def test_only_the_idempotent_write_may_repeat_without_confirming(self) -> None:
+        # The contract that keeps the two write kinds apart. Reading it off the
+        # call sites rather than the primitive: the primitive cannot tell which
+        # kind it was handed, so the argument at each call site IS the decision.
+        for workflow, step in _VERDICT_PUBLISHING_LANES:
+            script = _step_script(_workflow(workflow), step)
+            for line in script.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#") or "retry_comment_write" not in stripped:
+                    continue
+                if stripped.startswith("retry_comment_write() {"):
+                    continue
+                # A create names a marker to confirm against; a PATCH passes ""
+                # because repeating it cannot duplicate anything.
+                if "gh pr comment" in stripped:
+                    assert 'retry_comment_write "$marker"' in stripped or (
+                        'retry_comment_write "$MARKER"' in stripped
+                    ), (workflow, stripped)
+                elif "--method PATCH" in stripped:
+                    assert 'retry_comment_write ""' in stripped, (workflow, stripped)
 
     def test_every_lane_calls_the_guard_and_fork_fp_covers_both_sites(self) -> None:
         for lane in _GUARDED_LANES:
@@ -9385,7 +9674,21 @@ class TestForkLaneSurfacesAnUnstampedReviewBody:
             "  exit 0\n"
             "fi\n"
             'if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then\n'
+            '  printf \'%s\\n\' "$3" >> "$STUB_CALLS/create-calls.txt"\n'
             "  shift 3\n"
+            '  if [ -n "${STUB_CREATE_FAIL:-}" ]; then\n'
+            "    # STUB_CREATE_LANDS emulates the lost-ack partial failure that\n"
+            "    # makes a create unsafe to repeat: GitHub ACCEPTS the POST, so\n"
+            "    # the comment now exists, but the CLI still reports failure.\n"
+            "    # The body is written into the finder fixture, so the step's own\n"
+            "    # confirmation query sees it through real jq.\n"
+            '    if [ -n "${STUB_CREATE_LANDS:-}" ] && [ "$1" = "--body-file" ]; then\n'
+            '      jq -n --arg b "$(cat "$2")" \\\n'
+            '        \'[{id:777,user:{login:"github-actions[bot]"},body:$b}]\' \\\n'
+            '        > "$FINDER_COMMENTS_FILE"\n'
+            "    fi\n"
+            "    exit 7\n"
+            "  fi\n"
             '  if [ "$1" = "--body-file" ]; then cp "$2" "$STUB_CALLS/created-body.md"; fi\n'
             "  exit 0\n"
             "fi\n"
@@ -9393,6 +9696,20 @@ class TestForkLaneSurfacesAnUnstampedReviewBody:
             encoding="utf-8",
         )
         gh_stub.chmod(0o755)
+
+        # `sleep` is an external command, so a shim earlier on PATH intercepts
+        # the retry backoff without a test-only knob in the workflow: the lanes
+        # keep their real production budget and these tests do not wait it out.
+        # Records each interval, so the SCHEDULE is assertable rather than just
+        # the attempt count.
+        sleep_stub = stub_dir / "sleep"
+        sleep_stub.write_text(
+            "#!/usr/bin/env bash\n"
+            'printf \'%s\\n\' "$1" >> "$STUB_CALLS/sleeps.txt"\n'
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        sleep_stub.chmod(0o755)
 
         script_file = tmp_path / "step.sh"
         script = _step_script(_workflow(workflow), step)

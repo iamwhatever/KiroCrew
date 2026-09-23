@@ -1370,6 +1370,64 @@ jobs:
           #   - per-page jq: with --paginate the --jq filter runs PER PAGE.
           #   - @json: each match arrives as ONE compact line, so `head -n1`
           #     still selects a whole record even though bodies are multi-line.
+          # ONE publication primitive for every marker-comment write in this
+          # lane; test_ai_review_workflows.py pins it byte-identical across all
+          # of them, the way it already pins guarded_comment_upsert, so neither
+          # the budget nor the honesty below can drift lane by lane.
+          #
+          # A marker comment is the ONLY thing a freshness verifier reads. A
+          # write that does not land therefore leaves the PR indistinguishable
+          # from one no lane ever reviewed: prepare-pr's pr_status.py refuses a
+          # PR whose check-runs, readiness status and mergeable state all pass,
+          # and the only way out is manufacturing a new head -- which re-rolls
+          # the non-deterministic review lanes and discards the verdicts they
+          # already earned (#12952).
+          # First argument is the CONFIRM MARKER, and it decides whether a
+          # retry is allowed to repeat the write blindly.
+          #
+          # A PATCH is idempotent -- same URL, same body -- so it passes "" and
+          # every attempt simply repeats. A create is a POST and is NOT
+          # idempotent: GitHub can ACCEPT it and still lose the ack, so a blind
+          # second attempt plants a SECOND marker comment. Every id lookup in
+          # these lanes selects exactly one comment, so a later human override
+          # patches only that one while the duplicate keeps its own
+          # [BLOCK-MERGE] line, and pr_status.py stays blocked until somebody
+          # finds and deletes the extra comment by hand. A create therefore
+          # passes its marker, and before each repeat this re-queries: a
+          # comment that is there now is the previous attempt having landed,
+          # and the write is already done.
+          #
+          # An unreadable confirmation stops the create rather than repeating
+          # it. The two outcomes are not symmetric: a duplicate strands the
+          # gate with no automatic recovery, while an unpublished verdict is
+          # annotated, leaves the gate honestly red, and a re-run fixes it. So
+          # the destructive half must not proceed on an unknown, which is the
+          # same rule the head-confirmation read above follows.
+          retry_comment_write() {
+            local confirm_marker="$1" attempt landed
+            shift
+            for attempt in 1 2 3 4 5 6; do
+              if [ "$attempt" -gt 1 ] && [ -n "$confirm_marker" ]; then
+                if ! landed="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                  --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$confirm_marker\"))) | .id" 2>/dev/null)"; then
+                  echo "Cannot confirm whether the previous attempt landed, so not posting again."
+                  return 1
+                fi
+                if [ -n "$(printf '%s\n' "$landed" | awk 'NR == 1')" ]; then
+                  echo "A previous attempt did land, so not posting again."
+                  return 0
+                fi
+              fi
+              if "$@" >/dev/null; then
+                return 0
+              fi
+              echo "Writing this lane's marker comment failed on attempt $attempt."
+              if [ "$attempt" -lt 6 ]; then
+                sleep "$(( attempt * 5 ))"
+              fi
+            done
+            return 1
+          }
           existing_json="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$MARKER\"))) | {id, body} | @json" 2>/dev/null \
             | head -n1 || true)"
@@ -1426,17 +1484,33 @@ jobs:
                 sed -e '1,8{/^<!-- codex-ai-review -->$/d;/^<!-- codex-stale-notice-begin -->$/,/^<!-- codex-stale-notice-end -->$/d;}' \
                   "${RUNNER_TEMP:-/tmp}/codex-existing-comment.md"
               } > "${RUNNER_TEMP:-/tmp}/codex-merged-comment.md"
-              gh api --method PATCH "repos/$REPO/issues/comments/$existing" \
-                --field body="$(cat "${RUNNER_TEMP:-/tmp}/codex-merged-comment.md")" >/dev/null || true
-              echo "Preserved GPT 5.6 verdict in comment #$existing; prepended $kind-run notice for $HEAD"
+              if retry_comment_write "" gh api --method PATCH \
+                "repos/$REPO/issues/comments/$existing" \
+                --field body="$(cat "${RUNNER_TEMP:-/tmp}/codex-merged-comment.md")"; then
+                echo "Preserved GPT 5.6 verdict in comment #$existing; prepended $kind-run notice for $HEAD"
+              else
+                echo "::error::GPT 5.6 Review could not prepend its $kind-run notice for $HEAD to comment #$existing after 6 attempts, so that comment still presents an older head's verdict with no staleness notice."
+              fi
             else
-              gh api --method PATCH "repos/$REPO/issues/comments/$existing" \
-                --field body="$(cat "${RUNNER_TEMP:-/tmp}/codex-comment.md")" >/dev/null || true
-              echo "Updated existing GPT 5.6 comment #$existing"
+              if retry_comment_write "" gh api --method PATCH \
+                "repos/$REPO/issues/comments/$existing" \
+                --field body="$(cat "${RUNNER_TEMP:-/tmp}/codex-comment.md")"; then
+                echo "Updated existing GPT 5.6 comment #$existing"
+              else
+                echo "::error::GPT 5.6 Review produced a verdict for $HEAD but could not publish it to comment #$existing after 6 attempts. That comment still carries an older head, so every marker-freshness check reads this PR as unreviewed for $HEAD."
+              fi
             fi
           else
-            gh pr comment "$PR" --body-file "${RUNNER_TEMP:-/tmp}/codex-comment.md"
-            echo "Created new GPT 5.6 comment"
+            # This lane's create has always been BARE -- an unpublishable
+            # verdict fails the step rather than passing quietly -- so the
+            # retry is added without softening that: the budget is spent first,
+            # and only a genuinely unpublishable verdict still exits non-zero.
+            if retry_comment_write "$MARKER" gh pr comment "$PR" --body-file "${RUNNER_TEMP:-/tmp}/codex-comment.md"; then
+              echo "Created new GPT 5.6 comment"
+            else
+              echo "::error::GPT 5.6 Review produced a verdict for $HEAD but could not publish it after 6 attempts, so this PR carries no [GPT-REVIEWED] comment for $HEAD."
+              exit 1
+            fi
           fi
 
       # Fail-CLOSED gate on SHA-scoped markers:

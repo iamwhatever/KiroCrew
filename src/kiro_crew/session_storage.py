@@ -9,7 +9,8 @@ Kiro Crew and kiro-cli each own:
   dashboard history, search and memory consolidation — and
   ``sessions/<stem>.attachments/`` — the images its messages show, which
   ``/api/file-raw`` serves by the paths the transcript holds
-  (:mod:`kiro_crew.chat_attachments`).
+  (:mod:`kiro_crew.chat_attachments`) — and ``sessions/.threads/<stem>.json``,
+  the reply threads on its messages (``dashboard/chat_threads.py``).
 * ``<kiro home>/sessions/cli/<sid>.json`` + ``<sid>.jsonl`` — kiro-cli's replay
   log, read to resume the session.
 
@@ -100,8 +101,11 @@ from kiro_crew.history import (
     ARCHIVE_DIR_NAME,
     ARCHIVE_SEGMENT_DELIMITER,
     SESSIONS_DIR_NAME,
+    THREADS_DIR_NAME,
+    THREADS_SIDECAR_SUFFIX,
     ConversationLog,
     HistoryLockTimeout,
+    threads_sidecar_for_stem,
     transcript_lock_stems,
 )
 from kiro_crew.history_index import INDEX_FILENAME, SessionSearchIndex
@@ -633,6 +637,30 @@ def _scan_raw_uncached(sid_for_stem: Mapping[str, str]) -> list[_RawUnit]:
         for _path, size, mtime in segments:
             record(uid, size, mtime)
 
+    # Reply-thread half: ``.threads/<stem>.json`` beside the transcripts. One
+    # file per session; its bytes and its last write belong to the same unit.
+    try:
+        with os.scandir(_crew_sessions_dir() / THREADS_DIR_NAME) as it:
+            thread_entries = [
+                (entry.name, entry.stat(follow_symlinks=False))
+                for entry in it
+                if entry.name.endswith(THREADS_SIDECAR_SUFFIX)
+                and entry.is_file(follow_symlinks=False)
+            ]
+    except OSError:
+        thread_entries = []
+    for name, st in thread_entries:
+        stem = name[: -len(THREADS_SIDECAR_SUFFIX)]
+        if not _UNIT_ID_RE.match(stem):
+            continue
+        uid = attribute(stem)
+        if uid not in sizes and uid not in stems:
+            # A thread file outliving its transcript still costs space and still
+            # belongs to a session, so it forms a unit of its own.
+            sids.setdefault(uid, "")
+        add_stem(uid, stem)
+        record(uid, st.st_size, st.st_mtime)
+
     return [
         _RawUnit(
             uid=uid,
@@ -709,6 +737,19 @@ def _unit_paths(
         adir = attachments_dir(_crew_sessions_dir(), stem)
         for path in _attachment_files(adir):
             found.append((path, f"{STAGE_CREW_LEAF}/{adir.name}/{path.name}"))
+        # The reply threads on the transcript's messages: primary content, one
+        # file per session, so it travels with the transcript or the reclaim
+        # would leave the session's replies orphaned in the live store.
+        # A sidecar that is absent is a session with no threads; one that cannot
+        # be looked at (permission drift, a file where the `.threads` directory
+        # should be) RAISES, as `_attachment_files` does: answering "none" would
+        # let the transcript move and leave the replies behind.
+        sidecar = threads_sidecar_for_stem(_crew_sessions_dir(), stem)
+        try:
+            if stat.S_ISREG(os.lstat(sidecar).st_mode):
+                found.append((sidecar, f"{STAGE_CREW_LEAF}/{THREADS_DIR_NAME}/{sidecar.name}"))
+        except FileNotFoundError:
+            pass
     return found
 
 
@@ -1557,6 +1598,15 @@ def _canonical_origin(rel: str) -> Path | None:
             if not _UNIT_ID_RE.match(stem):
                 return None
             return attachments_dir(_crew_sessions_dir(), stem) / name
+        if len(parts) == 3 and parts[1] == THREADS_DIR_NAME:
+            # ``crew/.threads/<stem>.json``: the file name IS the session's
+            # identity, checked as one, the way the transcript's is.
+            if not name.endswith(THREADS_SIDECAR_SUFFIX):
+                return None
+            stem = name[: -len(THREADS_SIDECAR_SUFFIX)]
+            if not _UNIT_ID_RE.match(stem):
+                return None
+            return threads_sidecar_for_stem(_crew_sessions_dir(), stem)
     return None
 
 

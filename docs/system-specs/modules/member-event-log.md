@@ -54,7 +54,7 @@ unit's id must not be enumerated as that other unit.
 | `member/config` | the roster's config-derived fields plus `changed: [field, ...]` | `handlers.agents` after a save that changed at least one roster field; `handlers.members.api_members` when the folded roster disagrees with the agents config (hand-edited config) |
 | `member/binding` | `{slot_key}` | `handlers.members.api_member_thread` after the DM binding is written |
 | `member/rules` | `{text}` | `handlers.members.api_member_rules_put` after the rules file is written |
-| `member/message` | `{ts, preview}` | `DashboardState._broadcast_chat_message` for a member DM slot |
+| `member/message` | `{ts, preview?}` — `preview` only for a SPEECH row (`user` / `assistant` with visible text); a machinery row (tool call, auto-nudge turn, envelope, say-nothing reply) carries `ts` alone, so the roster's `last_message` keeps the last thing said while `last_active_ts` still bumps. The cold roster read applies the same rule through `last_message_info(speech_only=True)` | `DashboardState._broadcast_chat_message` for a member DM slot |
 | `activity/record` | the participation record, including `ts` | `members.record_activity` (replaces the former `activity.jsonl`) |
 | `slot/opened` · `slot/closed` | `{slot_key}` · `{slot_key, reason}` | the `slots` broadcast, diffing member-driven slots against the previous set |
 | `patrol/started` · `patrol/stopped` | `{slot_key}` · `{slot_key, reason}` | the auto-nudge state callback in `slack.gateway` |

@@ -10,6 +10,8 @@ import type { VirtualTranscriptHandle } from '../app-sdk/ChatMessageList'
 import { EdgeFade, JumpToBottomButton } from '../app-sdk/ChatScrollChrome'
 import { createTranscriptRenderers } from '../pages/chat/transcriptRenderers'
 import ChatInput, { type ComposerBusyMode } from './ChatInput'
+import { filterCrewmateChat } from './chat/crewmateBubbles'
+import type { CrewmateIdentity } from '../pages/chat/CrewmateMessage'
 import ErrorNotice from './ErrorNotice'
 import { Btn } from './ui'
 import ChatDropOverlay, { useChatFileDrop } from './ChatDropOverlay'
@@ -99,6 +101,7 @@ export default function ChatPane({
   openSideChat,
   leading,
   busyMode = 'split',
+  crewmate,
 }: {
   slotKey: string
   focused?: boolean
@@ -154,6 +157,14 @@ export default function ChatPane({
    *  turn. Decided by the host, never inferred here, so no pane changes
    *  behaviour by accident. */
   busyMode?: ComposerBusyMode
+  /** This pane is a CREWMATE's chat (a member-mode slot on the Members page):
+   *  the transcript shows only what the crewmate says to the user — the
+   *  auto-nudge turns, cron and sub-agent envelopes, tool rows and say-nothing
+   *  rows stay in the slot's history for the Work log but are not drawn — and
+   *  the assistant rows draw as a run of bubbles under the crewmate's avatar
+   *  (components/chat/crewmateBubbles). Undefined = an ordinary transcript;
+   *  decided by the host, never inferred from the slot. */
+  crewmate?: CrewmateIdentity
 }) {
   // One instance covers both dropdown filter inputs (never open at once).
   const dispatch = useAppDispatch()
@@ -345,10 +356,24 @@ export default function ChatPane({
   // hand `messages` a fresh array identity per character, defeating the memo()
   // on ChatMessageList and re-running its O(N) turn grouping while the user
   // types.
-  const { messages, queuedMessages, systemDeliveryCount } = useMemo(
+  const { messages: paneMessages, queuedMessages, systemDeliveryCount } = useMemo(
     () => splitPaneMessages(allMessages),
     [allMessages],
   )
+  // A crewmate's chat draws only what the crewmate says (see the `crewmate`
+  // prop). Filtered HERE, above the list, so the run positions the assistant
+  // rows compute from their neighbours see the drawn list, and so the pinned
+  // prompt, the earlier-messages anchor and the empty hint all agree with what
+  // is on screen. Same array identity back when nothing is dropped.
+  const messages = useMemo(
+    () => (crewmate ? filterCrewmateChat(paneMessages) : paneMessages),
+    [crewmate, paneMessages],
+  )
+  // The unfiltered rows, handed to the row set for the one read that must see
+  // what the filter dropped (the steer-chip decision reads the policy-block
+  // inject row). `undefined` for an ordinary chat, so its renderer set does not
+  // rebuild on every appended message.
+  const crewmateTranscript = crewmate ? paneMessages : undefined
   // EVERY queued row, cards and hidden system deliveries alike. A reorder
   // submits the full sequence — see useQueuedMessageActions — so the
   // non-interactive rows `splitPaneMessages` strips out are still needed here.
@@ -1191,8 +1216,10 @@ export default function ChatPane({
       // A steer-only surface has no steer/queue concept to explain, so a
       // confirmed steer draws as an ordinary message: no badge, no tint.
       hideSteerBadge: busyMode === 'steer-only',
+      crewmate,
+      crewmateTranscript,
     }),
-    [slotKey, toolDisclosure, setToolDisclosureFor, busyMode],
+    [slotKey, toolDisclosure, setToolDisclosureFor, busyMode, crewmate, crewmateTranscript],
   )
 
   // Quote / Ask on selected assistant text — the same chat-core seam the main
@@ -1376,8 +1403,17 @@ export default function ChatPane({
                     <Btn onClick={() => { void refetchSlotDetail() }}>{i18nT('components.chatPane.retry')}</Btn>
                   </div>
                 )}
+                {/* A crewmate whose whole history is machinery (a patroller that
+                    has not spoken yet) filters to an empty chat. That is not a
+                    fresh thread, so it must not read as one: say who has not
+                    spoken and where the work went, instead of "type a message
+                    to start" beside a summary that counts its wakes. */}
                 {messages.length === 0 && !running && !slotDetailFailed && !hideEmptyHint && (
-                  <div className="text-center text-muted text-[13px] px-4 py-8">{i18nT('components.chatPane.session_ready_type_a_message_to_start')}</div>
+                  <div className="text-center text-muted text-[13px] px-4 py-8" data-testid={crewmate && paneMessages.length > 0 ? 'crewmate-quiet-hint' : undefined}>
+                    {crewmate && paneMessages.length > 0
+                      ? i18nT('components.chatPane.crewmate_quiet', { name: crewmate.name })
+                      : i18nT('components.chatPane.session_ready_type_a_message_to_start')}
+                  </div>
                 )}
                 {/* Suppressed on the active slot: that pane renders the store's full
                     history, so the bound does not apply and the row would be false. */}

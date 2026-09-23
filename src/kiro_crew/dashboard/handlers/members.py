@@ -309,8 +309,10 @@ async def api_members(request: web.Request) -> web.Response:
             mt = state.conversation_log.session_mtime(log_key)
             if not mt:
                 continue
+            # Speech only: the row's preview quotes what the member's chat
+            # draws (its speech), never a tool call or a patrol turn.
             preview, msg_ts, stopped = state.conversation_log.last_message_info(
-                log_key, sanitize=_sanitize
+                log_key, sanitize=_sanitize, speech_only=True
             )
             # Order by the newest MESSAGE, not the file: metadata writes and
             # rehydration bump the mtime without any new message, which made

@@ -42,6 +42,8 @@ Missing history must never silently turn a private topic into Global memory.
 | `website/src/pages/KiroCrewAgentsPage.tsx` | The Crews UI, mounted as the **Crews** tab of `CapabilitiesPage` (Agent Capabilities) |
 | `website/src/components/crew/crewEditorSections.ts` | The crew editor's pane registry, including the Routing pane that edits `triggers` |
 | `website/src/components/CrewWakeSection.tsx` | "What wakes this agent" — schedules, deliberately distinct from `triggers` |
+| `website/src/components/chat/crewmateBubbles.ts` | A crewmate's chat: what the transcript draws (`filterCrewmateChat`) and the run / corner rule for its bubbles (`crewmateRunPosition`, `crewmateBubbleClass`) |
+| `website/src/pages/chat/CrewmateMessage.tsx` | One crewmate message in its chat: author line on the run opener, bubble in the avatar gutter |
 
 Crew creation reports `409 agent_exists` for both an existing name and a
 concurrent name collision. The member-titled form uses its translated duplicate
@@ -725,6 +727,70 @@ The loader is defensive about hand-edited config: a non-string `model` or
 `triggers` collapses to `""`, an unknown `reasoning_effort` collapses to inherit,
 and a junk watchdog override collapses to `0`.
 
+## A crewmate's chat
+
+A member-mode slot's transcript is the crewmate's whole working record: the
+`[auto-nudge cycle N]` turns of its patrol loop, `[Cron notification …]` and
+`[Subagent completion event]` envelopes, every tool call, and the say-nothing
+reply a quiet patrol ends on. The Members page's chat pane shows **only what
+the crewmate says to the user** and the user's own messages. Everything else
+stays in the slot's history — the Work log reads it from there — and is
+filtered at render time by `filterCrewmateChat`
+(`website/src/components/chat/crewmateBubbles.ts`), which `ChatPane` applies
+when its host passes `crewmate`. Ordinary chats never pass it and are drawn
+unchanged.
+
+What is hidden: rows with role `nudge`, `inject`, `subagent`, `tool`,
+`tool_call`, `tool_result`, `thinking`; and an `assistant` row that is not
+speech — invisible-only content (the bare U+200B the model is instructed to
+answer a quiet patrol with, `isHiddenInvisibleAssistantRow`), a gateway system
+notice written under the assistant role (compaction, session reload), or an
+injected workflow completion. A turn that ends without addressing the user is
+therefore a turn whose final assistant text is empty: the model's own silence
+is the signal, and no heuristic over the words decides for it — a row with
+visible words is always shown, so a finding or a question can never be
+filtered away. No "N quiet patrols" divider is drawn in their place. Rows the
+user must see or act on stay: `user`, `error`, `notice`, `file`, `mcp_oauth`,
+`permission` (a pending approval is still the approval surface), the stop
+card, and the live `streaming` row. A stop card (a `system` row of kind
+`stop_event`) is drawn too, and like an error row it breaks a run. When the
+filter leaves NOTHING to draw although the transcript is not empty (a patroller
+that has never spoken), the pane's empty hint is the crewmate's — "<name> hasn't
+said anything to you yet." — never the fresh-thread "Session ready" line, which
+would read as lost history beside a summary counting its wakes. The roster row
+beside the chat quotes the same thing the chat draws: its `last_message` is
+SPEECH only (`last_message_info(speech_only=True)` on the cold read, a
+`member/message` event without `preview` for a machinery row on the live path —
+see [member-event-log](member-event-log.md)), so a never-spoken patroller's row
+is blank rather than quoting a shell command; recency still bumps on every row.
+
+How it is drawn: the crewmate's messages form Slack-style **runs**. The first
+message of a run carries the author line — `CrewAvatar` seeded by the crewmate's
+name (its `avatar` record when it has one) at 28px, the name, the message time
+through the locale seam — and every message is its own bubble (`bg-card`,
+`border-border`, `max-w-[72ch]`) in the text column right of the avatar gutter,
+so consecutive bubbles share one avatar. Corner rule on the run's (left) side:
+single = all corners full; first = bottom-left small; middle = top-left and
+bottom-left small; last = top-left small; right corners always full. A run
+breaks on a user message, on any row the user sees between two messages (an
+error, a pending approval), or after `CREWMATE_RUN_GAP_MS` (5 minutes) of
+silence; a resolved approval or a state-only row between two messages does not
+split the run, and a streaming row with no timestamp yet continues it. The
+bubble is the ordinary `AssistantMessage` (markdown, `[OPTIONS:]` chips) with
+the bubble surface passed in as `bubbleClassName`; the SDK's footer rule
+(`renderAssistantBubble`) is shared, not copied, with two host overrides: the
+run's last bubble (`single` / `end`) always carries the footer and its hover
+actions — the SDK's own rule would withhold it when the next drawn row is
+another reply, but in this chat a run only ends on a boundary the user sees or
+on the silence gap, so the run end IS the turn end — and the steer-chip
+suppression (`turnHadPolicyBlock`) reads the UNFILTERED transcript the pane
+passes as `crewmateTranscript`, because the policy-block marker lives on an
+`inject` row the filter drops, and reading the filtered list would credit a
+system-forced continuation to the user. User messages keep their existing
+rendering. The run position is exported (`crewmateRunPosition`) for a
+reply-thread footer to reuse; no DOM attribute is stamped until that reader
+exists.
+
 ## Selection: the `select_crew` contract
 
 Discovery importing a provider template as a configured member does not rebind
@@ -853,6 +919,7 @@ name, and it resolves an empty crew too so the concrete template stays inside
 | `test/test_crew_reasoning_effort.py` | Per-crew effort reaches a crew dispatch |
 | `test/test_members.py`, `test/test_members_dm_thread.py` | Slug validation and containment, activity recording and dedupe, DM-binding canonicality, rules and briefing reads |
 | `test/test_chat_send_agent_model_default.py` | The crew model default a new session starts on |
+| `website/src/components/chat/crewmateBubbles.test.ts` | What a crewmate's chat draws (machinery dropped, speech and user-facing rows kept, same array back when nothing is dropped) and the run rule (first/middle/last, single, breaks on a user row, a pending approval and the 5-minute gap, reads through a resolved approval and an untimestamped streaming row, corners on the left side only) |
 
 ## Retired: Crew Mode
 

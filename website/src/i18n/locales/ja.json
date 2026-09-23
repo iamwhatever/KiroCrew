@@ -5976,6 +5976,7 @@
     "chatPane": {
       "agent_list": "エージェントリスト",
       "close_pane": "ペインを閉じる",
+      "crewmate_quiet": "{{name}} はまだあなたに何も話していません。",
       "earlier_messages_load_failed": "以前のメッセージを読み込めませんでした。会話の先頭までスクロールすると再試行できます。",
       "earlier_messages_open_session": "以前のメッセージ — セッション全体を開く（分割表示を閉じます）",
       "earlier_messages_unavailable": "以前のメッセージはこのセッションの履歴では利用できなくなりました。",

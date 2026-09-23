@@ -108,6 +108,7 @@ import { activityDayLabel, floorCountText, groupActivityDays, projectLabel } fro
 import { safeGetItem, safeSetItem } from '../../utils/safeStorage'
 import { useMemberProjection, useMemberRosterViews } from '../../state/useMemberProjection'
 import type { RosterView, ActivityView, WakeView } from '../../state/memberProjectionTypes'
+import type { CrewmateIdentity } from '../chat/CrewmateMessage'
 
 /** The crew manager surface — the ONLY write path for member configuration.
  *  The explicit tab wins over CapabilitiesPage's remembered last tab. */
@@ -942,6 +943,14 @@ export default function MembersPage() {
       last_message: active.last_message || activeRoster.last_message,
     }
   }, [active, activeRoster])
+  // The identity the DM pane draws the crewmate's messages under. Memoised on
+  // the two fields so the pane's renderer memo does not rebuild per render.
+  const crewmateName = activeView?.name
+  const crewmateAvatar = activeView?.avatar
+  const crewmateIdentity = useMemo<CrewmateIdentity | undefined>(
+    () => (crewmateName ? { name: crewmateName, avatar: crewmateAvatar } : undefined),
+    [crewmateName, crewmateAvatar],
+  )
   // Read the memory-disclosure vocabulary off the projected view so a pushed
   // memory_store frame updates the drawer copy without a roster refetch, the
   // same way the config fields above do; falls back to the server row.
@@ -2572,6 +2581,7 @@ export default function MembersPage() {
                     // ready" would contradict it one line down.
                     hideEmptyHint={activeThreadFailed}
                     openSideChat={openMemberSideChat}
+                    crewmate={crewmateIdentity}
                   />
                 </ErrorBoundary>
               </div>

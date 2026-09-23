@@ -92,7 +92,7 @@ from kiro_crew.notifications.bus import (
 from kiro_crew.notifications.rate_limit import AppRateLimiter
 from kiro_crew.notifications.resource_pressure import ResourcePressureNotifier
 from kiro_crew.notifications.settings import ChannelSettings
-from kiro_crew.preview_text import strip_markdown_preview
+from kiro_crew.preview_text import drop_format_chars, strip_markdown_preview
 from kiro_crew.release_channel import channel as _release_channel_of_build
 from kiro_crew.safety_override import cached_disabled_approval_modes, safety_override
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
@@ -6538,6 +6538,14 @@ class DashboardState:
                 _prev, _ = redact_exfiltration_urls(_prev)
                 _prev, _ = redact_credentials(_prev)
                 _prev = _prev[:140]
+                # The event always bumps recency; it carries a preview only
+                # for SPEECH (user / assistant) with visible text, so the
+                # roster keeps quoting the last thing said when a patrol turn
+                # or a say-nothing reply lands (the roster read path applies
+                # the same rule through `speech_only`).
+                _payload: dict[str, object] = {"ts": _ev_ts}
+                if role in ("user", "assistant") and drop_format_chars(_prev).strip():
+                    _payload["preview"] = _prev
 
                 # Off the event loop: emit opens the member log and does a
                 # synchronous os.fsync append. This callback runs loop-side, so
@@ -6549,7 +6557,7 @@ class DashboardState:
                         _mslug,
                         None,
                         MEMBER_MESSAGE,
-                        {"ts": _ev_ts, "preview": _prev},
+                        _payload,
                     )
 
                 # Queued on the ordered executor either way -- see the slot

@@ -3169,6 +3169,20 @@ SESSION_SEND_SCHEMA = ToolSchema(
     ],
 )
 
+SESSION_ADOPT_SCHEMA = ToolSchema(
+    tool_name="session_adopt",
+    fields=[
+        FieldSpec("target", str, required=True, max_len=MAX_SHORT_STRING),
+    ],
+)
+
+SESSION_RELEASE_SCHEMA = ToolSchema(
+    tool_name="session_release",
+    fields=[
+        FieldSpec("target", str, required=True, max_len=MAX_SHORT_STRING),
+    ],
+)
+
 SESSION_READ_MESSAGE_SCHEMA = ToolSchema(
     tool_name="session_read_message",
     fields=[
@@ -3417,6 +3431,8 @@ MCP_DASHBOARD_SCHEMAS: dict[str, ToolSchema] = {
     "session_stop": SESSION_STOP_SCHEMA,
     "session_close": SESSION_CLOSE_SCHEMA,
     "session_send": SESSION_SEND_SCHEMA,
+    "session_adopt": SESSION_ADOPT_SCHEMA,
+    "session_release": SESSION_RELEASE_SCHEMA,
     "session_read_message": SESSION_READ_MESSAGE_SCHEMA,
     "chat_folder_tree": CHAT_FOLDER_TREE_SCHEMA,
     "chat_folder_create": CHAT_FOLDER_CREATE_SCHEMA,

@@ -78,10 +78,12 @@ from kiro_crew.crew_log.checkpoint import CHECKPOINT_DIR, MAX_CHECKPOINT_BYTES
 from kiro_crew.crew_log.schema import KIND_SESSION
 from kiro_crew.crew_log.session_tree import (
     TREE_UNIT_CAP,
+    EdgeRecord,
     OpenedRecord,
     TreeNode,
     TreeReading,
     fold_tree,
+    latest_edges,
 )
 from kiro_crew.session_ledger import _store_name
 from kiro_crew.validation import MAX_ACP_SESSION_ID_LEN, MAX_SHORT_STRING
@@ -100,8 +102,12 @@ CHECKPOINT_NAME: Final[str] = "session-tree.json"
 #: build's reading of a rule this build may have changed.
 #: Bumped when the payload's shape changes. A mismatch DISCARDS the file rather than
 #: migrating it, so an older build's checkpoint -- which carries no ``root`` and so
-#: cannot be proven to describe this store -- is rebuilt from the log instead.
-CHECKPOINT_VERSION: Final[int] = 2
+#: cannot be proven to describe this store, or no ``edges`` and so cannot be proven to
+#: hold the store's adoptions -- is rebuilt from the log instead. The ``edges`` half is
+#: why this is a bump rather than a key read additively: a file written before
+#: adoptions existed would load as "no session has ever been adopted", which looks
+#: exactly like the truth and is wrong.
+CHECKPOINT_VERSION: Final[int] = 3
 
 #: How long a dirty projection waits before its checkpoint is written, in seconds. A
 #: debounce, not a delay: a burst of session creations coalesces into ONE write. Short
@@ -176,6 +182,24 @@ def _within_bounds(record: OpenedRecord) -> bool:
     return True
 
 
+def _edge_within_bounds(edge: EdgeRecord) -> bool:
+    """Whether every RETAINED string on *edge* is within its bound.
+
+    The same limits :func:`_within_bounds` applies, for the same reason and against
+    the same risk: these strings are held for as long as the projection lives and are
+    written into the checkpoint. The slot keys take ``MAX_SHORT_STRING`` and the
+    citing log's id takes ``MAX_ACP_SESSION_ID_LEN``, which is what the scanner
+    applies to the same two values on a unit's head.
+    """
+    if len(edge.slot) > MAX_SHORT_STRING:
+        return False
+    if edge.parent_slot is not None and len(edge.parent_slot) > MAX_SHORT_STRING:
+        return False
+    if len(edge.sid) > MAX_ACP_SESSION_ID_LEN:
+        return False
+    return True
+
+
 def _record_from_json(raw: Any) -> OpenedRecord | None:
     """One record from the checkpoint, or ``None`` when it is not one.
 
@@ -219,6 +243,46 @@ def _record_from_json(raw: Any) -> OpenedRecord | None:
     return record if _within_bounds(record) else None
 
 
+def _edge_to_json(edge: EdgeRecord) -> dict[str, Any]:
+    """One decision as plain JSON. Short keys, one row per adopted slot.
+
+    ``parent`` is OMITTED for a release rather than written as null, the same
+    distinction the entry itself keeps: a decision with no parent is the release, and
+    a key that is absent cannot be confused with a key whose value failed to load.
+    """
+    out: dict[str, Any] = {"slot": edge.slot, "at": edge.at, "sid": edge.sid}
+    if edge.parent_slot:
+        out["parent"] = edge.parent_slot
+    return out
+
+
+def _edge_from_json(raw: Any) -> EdgeRecord | None:
+    """One decision from the checkpoint, or ``None`` when it is not one.
+
+    Type-checked rather than coerced, and BOUNDED on the same limits every other
+    door into this state applies, for the reason :func:`_record_from_json` gives: the
+    file is a plain file under the data home, and what makes it safe to load is this
+    check rather than its provenance. A row this cannot read costs that slot's
+    decision until the next cold scan, which is why it is dropped rather than
+    guessed at.
+    """
+    if not isinstance(raw, dict):
+        return None
+    slot = raw.get("slot")
+    at = raw.get("at")
+    sid = raw.get("sid")
+    parent = raw.get("parent")
+    if not isinstance(slot, str) or not slot or len(slot) > MAX_SHORT_STRING:
+        return None
+    if isinstance(at, bool) or not isinstance(at, int):
+        return None
+    if not isinstance(sid, str) or not sid or len(sid) > MAX_ACP_SESSION_ID_LEN:
+        return None
+    if parent is not None and (not isinstance(parent, str) or len(parent) > MAX_SHORT_STRING):
+        return None
+    return EdgeRecord(slot=slot, parent_slot=parent or None, at=at, sid=sid)
+
+
 #: Every projection alive in this process. WEAK, so membership never keeps one from
 #: being collected -- this exists to reach a projection's pending checkpoint write, not
 #: to own the projection. :func:`reset_for_tests` is the reader: the process-wide
@@ -244,6 +308,14 @@ class SessionTreeProjection:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._records: dict[str, OpenedRecord] = {}
+        #: The newest DECISION per slot -- an adoption, or a release. Keyed by slot
+        #: because that is the tree's key, while ``_records`` is keyed by unit id: one
+        #: slot can write several logs, and every one of them speaks for the same
+        #: node. A second layer rather than a field on the record, because an opened
+        #: record says who OPENED the session and a decision says who holds it now;
+        #: writing one into the other would make the fold's oldest-record rule pick
+        #: the creator over a takeover that came after it.
+        self._edges: dict[str, EdgeRecord] = {}
         #: The cached fold. ``None`` marks it owed, so :meth:`nodes` recomputes once and
         #: then hands out the same object until something actually changes.
         self._nodes: Optional[dict[str, TreeNode]] = None
@@ -297,7 +369,7 @@ class SessionTreeProjection:
         """
         with self._lock:
             if self._nodes is None:
-                self._nodes = fold_tree(self._records.values())
+                self._nodes = fold_tree(self._records.values(), self._edges.values())
             return self._nodes
 
     def reading(self) -> TreeReading:
@@ -310,7 +382,7 @@ class SessionTreeProjection:
         """
         with self._lock:
             if self._nodes is None:
-                self._nodes = fold_tree(self._records.values())
+                self._nodes = fold_tree(self._records.values(), self._edges.values())
             return TreeReading(
                 nodes=self._nodes,
                 incomplete=self._incomplete,
@@ -403,6 +475,77 @@ class SessionTreeProjection:
             self._dirty = True
         self._schedule_checkpoint()
 
+    def apply_edge(self, edge: EdgeRecord) -> None:
+        """Fold ONE newly-committed decision in -- a takeover, or a release.
+
+        Called by the emitter right after the ``session/adopted`` or
+        ``session/released`` append succeeded, on the same terms as :meth:`apply`: the
+        memory never runs ahead of durability.
+
+        SAME-REFERENCE when nothing moves. A decision equal to the one held is not a
+        change, so it neither invalidates the cached fold nor dirties the checkpoint,
+        and :meth:`nodes` keeps handing out the same object. That is what stops a
+        replay of a tail the checkpoint already covered from costing a rewrite and a
+        re-render on every cold start.
+
+        AN OLDER DECISION NEVER WINS. The held one stays unless the arriving record is
+        newer by ``(at, sid)``. Ordering by arrival would be correct for the writer,
+        which cannot deliver a decision before it makes it -- but this is not the only
+        door: a checkpoint load, a tail replay and the writer all reach this state, and
+        a replay walks units in directory order, so a release read from one unit can
+        arrive after an adoption made later. Taking the last arrival would put a
+        session back under a parent that already let it go, and it would stay there
+        until the process restarted.
+
+        A record whose slot is blank is dropped: the state is keyed by it, and a blank
+        key would collide every such decision onto one entry. One past its bound is
+        dropped for the reason :meth:`apply` drops one -- the strings live as long as
+        the projection and are written to the checkpoint -- and refused rather than
+        truncated, because a truncated slot key is a different key.
+
+        Bounded by :data:`TREE_UNIT_CAP` like every path that adds to this state.
+        """
+        if not edge.slot:
+            return
+        if not _edge_within_bounds(edge):
+            logger.debug("session tree projection refused an over-long decision; dropping it")
+            return
+        with self._lock:
+            held = self._edges.get(edge.slot)
+            if held == edge:
+                return
+            if held is not None and (edge.at, edge.sid) < (held.at, held.sid):
+                # Older than what is held: a replay reading a decision that was
+                # already superseded. Nothing moves, and nothing is dirtied.
+                return
+            self._edges[edge.slot] = edge
+            self._evict_edges_to_cap_locked()
+            self._nodes = None
+            self._dirty = True
+        self._schedule_checkpoint()
+
+    def _evict_edges_to_cap_locked(self) -> None:
+        """Bring the decisions back within :data:`TREE_UNIT_CAP`. Caller holds the lock.
+
+        Oldest-first by ``(at, slot)``, the same shape
+        :meth:`_evict_to_cap_locked` uses and for the same reason: the record just
+        applied was committed a moment ago, so evicting the oldest keeps the sessions
+        a sidebar is actually showing, and the second key makes the choice
+        deterministic rather than dependent on dictionary order.
+
+        Both completeness flags are set when it evicts, because an evicted decision
+        means the tree shows a session hanging somewhere it does not hang -- which is
+        exactly what a reader deciding on an edge must not be told confidently.
+        """
+        surplus = len(self._edges) - TREE_UNIT_CAP
+        if surplus <= 0:
+            return
+        doomed = sorted(self._edges.values(), key=lambda e: (e.at, e.slot))
+        for edge in doomed[:surplus]:
+            self._edges.pop(edge.slot, None)
+        self._incomplete = True
+        self._over_cap = True
+
     def _evict_to_cap_locked(self) -> None:
         """Bring the records back within :data:`TREE_UNIT_CAP`. Caller holds the lock.
 
@@ -466,13 +609,23 @@ class SessionTreeProjection:
         there is nothing to pop. The scan may have listed that unit moments before it
         was deleted, and installing its result would otherwise put the record back --
         so the sid is recorded and the install drops it.
+
+        Any DECISION this unit contributed goes with it. An adoption is read from the
+        log that recorded it, so a unit that is gone is not evidence for where its slot
+        hangs, and keeping the edge would leave the tree asserting a takeover whose only
+        record is deleted. The slot's other logs, if it has any, still
+        speak for it -- their own decisions are keyed by the same slot and are held
+        separately.
         """
         if not sid:
             return
         with self._lock:
             if self._seeding:
                 self._forgotten_while_seeding.add(sid)
-            if self._records.pop(sid, None) is None:
+            dropped_edges = [slot for slot, edge in self._edges.items() if edge.sid == sid]
+            for slot in dropped_edges:
+                self._edges.pop(slot, None)
+            if self._records.pop(sid, None) is None and not dropped_edges:
                 return
             self._nodes = None
             self._dirty = True
@@ -524,6 +677,7 @@ class SessionTreeProjection:
                     # reconciling it: none of those records describe this store, and a
                     # replay would keep every one it could not disprove.
                     self._records = {}
+                    self._edges = {}
                     self._nodes = None
                     self._incomplete = False
                     self._over_cap = False
@@ -598,6 +752,36 @@ class SessionTreeProjection:
         self._records = merged
         self._evict_to_cap_locked()
 
+    def _install_seed_edges_locked(self, scanned: "dict[str, EdgeRecord]") -> None:
+        """Install the decisions a seed established, keeping the NEWER of the two.
+
+        Caller holds the lock. The records above merge by provenance -- a held record
+        beats the scan's copy because it came from a completed append -- and decisions
+        deliberately do not: they carry their own order, so the rule is the same one
+        :meth:`apply_edge` uses, and the newer of held and scanned wins.
+
+        That is not a weaker rule but a stricter one. A takeover committed while the
+        scan ran is newer than anything the scan could have read, so it survives; a
+        decision the scan read from a log this process has not applied is newer than a
+        stale held one, so it wins instead of being overwritten by it. Provenance
+        cannot separate those two cases and ``(at, sid)`` can.
+
+        A unit REMOVED while the scan ran takes its decisions with it, for the reason
+        its record is excluded: the scan may have listed the log before the deletion.
+        """
+        merged = dict(scanned)
+        for slot, edge in list(merged.items()):
+            if edge.sid in self._forgotten_while_seeding:
+                merged.pop(slot, None)
+        for slot, held in self._edges.items():
+            if held.sid in self._forgotten_while_seeding:
+                continue
+            scanned_edge = merged.get(slot)
+            if scanned_edge is None or (held.at, held.sid) >= (scanned_edge.at, scanned_edge.sid):
+                merged[slot] = held
+        self._edges = merged
+        self._evict_edges_to_cap_locked()
+
     def _seed(self, live_sids: "tuple[str, ...]") -> None:
         """The body of :meth:`ensure_seeded`, so its caller owns one try/except."""
         with self._lock:
@@ -622,29 +806,33 @@ class SessionTreeProjection:
             from kiro_crew.crew_log.session_tree import SessionTree
 
             scanner = SessionTree()
-            reading = scanner.reading(live_sids)
+            reading = scanner.reading(live_sids, with_edges=True)
             with self._lock:
                 # Flags first, then the merge: eviction can only escalate them, so
                 # assigning the scan's values afterwards would undo that escalation.
                 self._incomplete = reading.incomplete
                 self._over_cap = scanner.over_cap
                 self._install_seed_locked({r.sid: r for r in reading.records if r.sid})
+                self._install_seed_edges_locked(
+                    {e.slot: e for e in latest_edges(reading.edges).values()}
+                )
                 self._nodes = None
                 self._seeded = True
                 self._dirty = True
             self._schedule_checkpoint()
             return
-        records, incomplete, over_cap = self._replay_tail(loaded)
+        records, edges, incomplete, over_cap = self._replay_tail(*loaded)
         with self._lock:
             self._incomplete = incomplete
             self._over_cap = over_cap
             self._install_seed_locked(records)
+            self._install_seed_edges_locked(edges)
             self._nodes = None
             self._seeded = True
             # Compared AFTER the merge, against the state actually installed: a record
             # that arrived during the scan is a difference from the checkpoint and owes
             # a write, which comparing the replay's own output would miss.
-            moved = self._records != loaded
+            moved = self._records != loaded[0] or self._edges != loaded[1]
             if moved:
                 self._dirty = True
         # Only worth a write when the seed actually moved something; an untouched
@@ -653,28 +841,42 @@ class SessionTreeProjection:
             self._schedule_checkpoint()
 
     def _replay_tail(
-        self, loaded: dict[str, OpenedRecord]
-    ) -> "tuple[dict[str, OpenedRecord], bool, bool]":
+        self, loaded: dict[str, OpenedRecord], loaded_edges: dict[str, EdgeRecord]
+    ) -> "tuple[dict[str, OpenedRecord], dict[str, EdgeRecord], bool, bool]":
         """Reconcile a loaded checkpoint against the store, at the cost of the DELTA.
 
         One ``iterdir`` for the root's entry NAMES -- no per-unit stat, which is the
         syscall this module exists to stop paying per read. A name the checkpoint does
         not hold gets its head read; a held record whose name is gone is dropped.
-        Normally both sets are empty and this is a single directory listing.
+        Normally both of those sets are empty and the head half is a single directory
+        listing.
 
-        Returns ``(records, incomplete, over_cap)``. A listing that fails at all makes
-        the answer ``incomplete``: the records are still served, because a stale edge
-        renders as a root and that is the pre-existing degradation, but a reader that
-        DECIDES on an edge is told the reconciliation did not complete.
+        The DECISIONS are reconciled on different terms, and they have to be. A head is
+        immutable once read, so a name the checkpoint already holds needs no second
+        look; a decision lives at the END of a log and a session can be adopted at any
+        moment, so a unit already in the checkpoint is exactly where a decision the
+        checkpoint missed will be. This therefore reads every admitted unit's tail, not
+        only the new ones -- a listing, a ``stat`` and a bounded read per unit, paid
+        once per process on the cold start. Skipping the held ones would make the
+        checkpoint authoritative for adoptions, and a stale one would leave a session
+        hanging under a parent that released it with nothing to correct it.
+
+        Returns ``(records, edges, incomplete, over_cap)``. A listing that fails at all
+        makes the answer ``incomplete``: the records are still served, because a stale
+        edge renders as a root and that is the pre-existing degradation, but a reader
+        that DECIDES on an edge is told the reconciliation did not complete.
         """
-        from kiro_crew.crew_log.session_tree import TREE_UNIT_CAP, opened_record
+        from kiro_crew.crew_log.session_tree import TREE_UNIT_CAP, edge_record, opened_record
         from kiro_crew.crew_log.store import (
             _checked_crew_log_root,
+            newest_segment,
             oldest_segment,
             read_head,
+            read_last_tree_edge,
         )
 
         records = dict(loaded)
+        edges = dict(loaded_edges)
         incomplete = False
         try:
             root = _checked_crew_log_root(KIND_SESSION)
@@ -686,19 +888,23 @@ class SessionTreeProjection:
         except FileNotFoundError:
             # No store root yet: nothing has been written on this home. An absence, not
             # a fault, and the checkpoint's own records are all there is to serve.
-            return records, False, False
+            return records, edges, False, False
         except OSError:
             logger.warning(
                 "session tree projection: the store root could not be listed, so its "
                 "checkpoint could not be reconciled; lineage reads as incomplete",
                 exc_info=True,
             )
-            return records, True, False
+            return records, edges, True, False
 
         held = {_store_name(sid): sid for sid in records}
         gone = [sid for name, sid in held.items() if name not in names]
         for sid in gone:
             records.pop(sid, None)
+            # A unit that is gone is not evidence for its slot's decisions, the same
+            # rule ``forget`` applies for the same reason.
+            for slot in [s for s, edge in edges.items() if edge.sid == sid]:
+                edges.pop(slot, None)
         new = [name for name in names if name not in held]
         # The cap bounds this loop like every other loop over the population. Past it
         # the replay has not seen everything, which is what ``over_cap`` reports.
@@ -724,7 +930,30 @@ class SessionTreeProjection:
             record = opened_record(directory, header, entry)
             if record is not None and record.sid:
                 records[record.sid] = record
-        return records, incomplete or over_cap, over_cap
+
+        # The decision pass, over every unit the records now cover -- the checkpoint's
+        # and the ones just read. Keyed off the records because a decision is keyed by
+        # SLOT and the record is where this reconciliation knows the slot from, the same
+        # way the scanner reads the head first and the tail second.
+        for record in list(records.values())[:TREE_UNIT_CAP]:
+            if not record.slot:
+                continue
+            directory = root / _store_name(record.sid)
+            tail_segment = newest_segment(directory)
+            if tail_segment is None:
+                continue
+            try:
+                entry = read_last_tree_edge(tail_segment)
+            except (OSError, ValueError):
+                incomplete = True
+                continue
+            found = edge_record(record.slot, record.sid, entry)
+            if found is None:
+                continue
+            candidate = edges.get(found.slot)
+            if candidate is None or (found.at, found.sid) >= (candidate.at, candidate.sid):
+                edges[found.slot] = found
+        return records, edges, incomplete or over_cap, over_cap
 
     # ── the checkpoint ─────────────────────────────────────────────────────
 
@@ -810,6 +1039,7 @@ class SessionTreeProjection:
                 # pinned when the write is armed, and the payload is built here.
                 "root": self._root or _current_root(),
                 "records": [_record_to_json(r) for r in self._records.values()],
+                "edges": [_edge_to_json(e) for e in self._edges.values()],
             }
             # Cleared while the payload is taken, so a change landing during the write
             # below leaves the state dirty and the follow-up carries it, where clearing
@@ -846,13 +1076,14 @@ class SessionTreeProjection:
         deliberate shutdown -- rather than whenever the debounce elapses.
         """
         with self._lock:
-            if not self._records and not self._dirty:
+            if not self._records and not self._edges and not self._dirty:
                 return False
             payload = {
                 "ver": CHECKPOINT_VERSION,
                 "written_at": int(time.time() * 1000),
                 "root": self._root or _current_root(),
                 "records": [_record_to_json(r) for r in self._records.values()],
+                "edges": [_edge_to_json(e) for e in self._edges.values()],
             }
             self._dirty = False
             # Pinned from the SAME locked block that built the payload. Resolving it
@@ -866,14 +1097,19 @@ class SessionTreeProjection:
         return wrote
 
 
-def _load_checkpoint() -> "dict[str, OpenedRecord] | None":
-    """The checkpoint's records, or ``None`` when there is no usable one.
+def _load_checkpoint() -> "tuple[dict[str, OpenedRecord], dict[str, EdgeRecord]] | None":
+    """The checkpoint's records and decisions, or ``None`` when there is no usable one.
 
     ``None`` is every failure, undifferentiated on purpose: absent, unreadable,
     oversized, unparseable, wrong ``ver``, or a payload whose shape this does not
     recognise all mean the same thing to the caller -- rebuild, which is always
     correct. Never raises, and never migrates: a ``ver`` mismatch is DISCARDED, because
     forward-applying an older build's state is how a fold quietly becomes garbage.
+
+    The two are returned together, from one read, for the reason
+    :class:`~kiro_crew.crew_log.session_tree.TreeReading` carries its flag: they are
+    halves of one state, and a caller that could load the records and ask for the
+    decisions separately could fold a tree from two different moments.
     """
     try:
         path = _checkpoint_path()
@@ -906,12 +1142,25 @@ def _load_checkpoint() -> "dict[str, OpenedRecord] | None":
     rows = payload.get("records")
     if not isinstance(rows, list):
         return None
+    # A missing ``edges`` key cannot reach here: the version gate above admits only a
+    # file this build wrote, and this build writes the key whether or not any session
+    # has been adopted. So a payload that lacks it is not an older file to tolerate but
+    # a damaged one, and the whole checkpoint is discarded rather than read as "no
+    # adoptions" -- which is the one wrong answer that looks exactly like a right one.
+    edge_rows = payload.get("edges")
+    if not isinstance(edge_rows, list):
+        return None
     records: dict[str, OpenedRecord] = {}
     for raw in rows:
         record = _record_from_json(raw)
         if record is not None:
             records[record.sid] = record
-    return records
+    edges: dict[str, EdgeRecord] = {}
+    for raw in edge_rows:
+        edge = _edge_from_json(raw)
+        if edge is not None:
+            edges[edge.slot] = edge
+    return records, edges
 
 
 def _save_checkpoint(payload: dict[str, Any], path: "Path | None" = None) -> bool:
@@ -1012,6 +1261,44 @@ def record_opened(
         )
     except Exception:  # pragma: no cover -- defensive
         logger.debug("session tree projection could not apply an opened record", exc_info=True)
+
+
+def record_adopted(sid: str, slot: str, at: int, parent_slot: str) -> None:
+    """Fold a just-committed ``session/adopted`` into the projection.
+
+    The emitter's door for a takeover, taking the values it just wrote rather than an
+    :class:`EdgeRecord` so that module does not have to import the record type -- the
+    same shape :func:`record_opened` has, for the same reason.
+
+    ``at`` is the entry's own millisecond, which is what orders this decision against
+    the others for the slot. An adoption with no ``parent_slot`` is dropped rather than
+    folded as a release: the two are different records and the emitter writes the one
+    it means.
+
+    Never raises: an append that already succeeded must not be reported as failed
+    because the memory image of it did not land, and a decision the projection missed
+    is recovered by the tail replay on the next cold start.
+    """
+    if not parent_slot:
+        return
+    try:
+        projection().apply_edge(
+            EdgeRecord(slot=slot or "", parent_slot=parent_slot, at=at, sid=sid)
+        )
+    except Exception:  # pragma: no cover -- defensive
+        logger.debug("session tree projection could not apply an adoption", exc_info=True)
+
+
+def record_released(sid: str, slot: str, at: int) -> None:
+    """Fold a just-committed ``session/released`` into the projection.
+
+    The counterpart of :func:`record_adopted`, and the only door that takes an edge
+    AWAY. Never raises, for the same reason.
+    """
+    try:
+        projection().apply_edge(EdgeRecord(slot=slot or "", parent_slot=None, at=at, sid=sid))
+    except Exception:  # pragma: no cover -- defensive
+        logger.debug("session tree projection could not apply a release", exc_info=True)
 
 
 def retract_unit_parent(sid: str) -> None:

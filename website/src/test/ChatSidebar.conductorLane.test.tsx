@@ -296,6 +296,66 @@ describe('chat sidebar — conductor lane', () => {
     expect(hint.textContent).toBe('')
   })
 
+  it('nests an adopted session under its new parent, and its children with it', () => {
+    /* The takeover, seen from the renderer. The payload's `parent` is whatever the
+       backend fold decided -- an adoption changes that value and nothing else -- so the
+       lane needs no new code for it, and this is the test that says so. `k-conductor`
+       and its whole branch move under `k-new`, which no row under it has to mention. */
+    localStorage.setItem('mc-sidebar-lane', 'conductor')
+    const adopted = [
+      { key: 'k-new', title: 'New conductor', messages: 1, running: false, modified: 5000 },
+      ...NESTED.map(row =>
+        row.key === 'k-conductor' ? { ...row, parent: { slot: 'k-new', key: 'k-new' } } : row,
+      ),
+    ]
+    const { getByTestId } = renderSidebar(adopted as never)
+    expect(laneRows(getByTestId('conductor-view-lane'))).toEqual(['k-new'])
+    fireEvent.click(getByTestId('conductor-chevron-k-new'))
+    fireEvent.click(getByTestId('conductor-chevron-k-conductor'))
+    // Re-queried after each press: the lane element is replaced on re-render, so a
+    // node captured before the clicks is detached and reports the old rows.
+    const lane = getByTestId('conductor-view-lane')
+    expect(laneRows(lane)).toEqual(['k-new', 'k-conductor', 'k-worker-a', 'k-worker-b'])
+    const moved = lane
+      .querySelector('[data-slot-key="k-worker-a"]')!
+      .closest('[data-conductor-depth]')
+    expect(moved?.getAttribute('data-conductor-depth')).toBe('2')
+  })
+
+  it('returns a released session to the top level, keeping what hangs under it', () => {
+    /* The release, which is the only thing that takes an edge away. `k-worker-a` becomes
+       a root and `k-deep` stays under it: only its own edge upward went. Root order is
+       the payload's, which the lane inherits rather than deciding. */
+    localStorage.setItem('mc-sidebar-lane', 'conductor')
+    const released = NESTED.map(row =>
+      row.key === 'k-worker-a' ? { ...row, parent: null } : row,
+    )
+    const { getByTestId } = renderSidebar(released as never)
+    expect(laneRows(getByTestId('conductor-view-lane'))).toEqual(['k-conductor', 'k-worker-a'])
+    fireEvent.click(getByTestId('conductor-chevron-k-worker-a'))
+    const lane = getByTestId('conductor-view-lane')
+    expect(laneRows(lane)).toContain('k-deep')
+    expect(within(lane).queryByTestId('conductor-orphan-k-worker-a')).toBeNull()
+  })
+
+  it('does not mark a released session as an orphan: the two mean different things', () => {
+    /* The orphan marker means "the session that opened this one is gone" -- the row
+       still CITES a creator it cannot nest under. A release clears the citation itself,
+       so there is nothing to mark, and conflating them would tell the person a session
+       they deliberately detached had lost its opener. */
+    localStorage.setItem('mc-sidebar-lane', 'conductor')
+    const mixed = [
+      { key: 'k-root', title: 'Root', messages: 1, running: false, modified: 4000 },
+      { key: 'k-released', title: 'Released worker', messages: 1, running: false, modified: 3000, parent: null },
+      { key: 'k-orphan', title: 'Orphaned worker', messages: 1, running: false, modified: 2000, parent: { slot: 'k-gone', key: null } },
+    ]
+    const lane = renderSidebar(mixed as never).getByTestId('conductor-view-lane')
+    expect(laneRows(lane)).toEqual(['k-root', 'k-released', 'k-orphan'])
+    expect(within(lane).queryByTestId('conductor-orphan-k-released')).toBeNull()
+    const hint = within(lane).getByTestId('conductor-orphan-k-orphan')
+    expect(hint.getAttribute('data-orphan-of')).toBe('k-gone')
+  })
+
   it('names the lane the next press opens, never the lane in view', () => {
     // The button is the feature's only entry point and every user meets it on every
     // press, so copy naming the CURRENT lane misdirects all of them -- and a screen

@@ -836,6 +836,31 @@ def oldest_segment(directory: Path) -> Path | None:
     return found[0][1]
 
 
+def newest_segment(directory: Path) -> Path | None:
+    """The surviving segment of *directory* with the HIGHEST first seq, or ``None``.
+
+    Where a unit's history ENDS today, which is the half :func:`oldest_segment`
+    cannot answer: a decision recorded after the session opened lands at the end of
+    the newest segment, not behind the header of the oldest one.
+
+    No name shortcut. ``log.jsonl`` is the oldest segment while it survives, so the
+    newest is only knowable from the listing -- and a unit that has never been
+    rotated has exactly one segment, which the listing finds in the same call.
+    """
+    try:
+        found = [
+            (first, child)
+            for child in directory.iterdir()
+            if (first := _segment_first_seq(child)) is not None
+        ]
+    except OSError:
+        return None
+    if not found:
+        return None
+    found.sort(key=lambda pair: pair[0])
+    return found[-1][1]
+
+
 def read_head(path: Path) -> "tuple[dict[str, Any] | None, Entry | None, bool]":
     """Line 1 of *path* parsed as its header object, line 2 as its first entry,
     and whether a line 2 EXISTS at all.
@@ -1286,11 +1311,61 @@ def _last_lifecycle_entry(tail: _Tail) -> "Entry | None":
     close would call a session that is running right now expired and delete a
     live conversation's log.
 
+    :data:`_LIFECYCLE_TYPES` holds those two types and no others, and nothing that
+    moves a session in the TREE belongs in it: this answer authorizes a DELETION,
+    so a type added here makes a unit whose newest such entry is not a close
+    immortal in retention. The tree's own types are read by
+    :func:`read_last_tree_edge`, which shares the window walk below and keeps its
+    own set.
+    """
+    return _last_entry_of_types(tail, _LIFECYCLE_TYPES)
+
+
+#: The two entry types that move a session in the TREE, read from a unit's tail.
+#: Deliberately NOT in :data:`_LIFECYCLE_TYPES`: that set decides open versus
+#: closed and therefore authorizes retention's delete, so an adoption sitting at
+#: the end of a log would keep that log forever.
+_TREE_EDGE_TYPES = frozenset({"session/adopted", "session/released"})
+
+
+def read_last_tree_edge(segment: Path) -> "Entry | None":
+    """The newest tree-edge entry in *segment*'s tail window, or ``None``.
+
+    An adoption or a release lands after the session opened, so a reader of a
+    unit's HEAD cannot see it. This is the counterpart read, and it is the same
+    bounded window retention already reads -- one open, at most ``_TAIL_WINDOW``
+    bytes, no walk of the file.
+
+    The bound is what the answer is honest about. Only entries written AFTER a
+    decision can push it out of the window, and a session that keeps working keeps
+    appending, so a takeover recorded long ago on a busy session is reachable from
+    this read only while it is still near the end. That is not a gap the cold scan
+    has to close: the projection folds every decision at the moment it is written
+    and carries it in its checkpoint, and this read exists for the cold start that
+    has no checkpoint to carry. A decision older than the window on a busy log is
+    therefore recovered from the checkpoint, and lost only by a cold start that also
+    lost that file -- which is the same exposure the head read already has for a
+    ``session/opened`` retention removed.
+
+    Raises whatever the read raises, like :func:`read_head`: a caller distinguishes
+    "this unit has no decision" from "its bytes were not seen", and only the first
+    is something to cache.
+    """
+    tail = _scan_tail(segment)
+    if tail.empty:
+        return None
+    return _last_entry_of_types(tail, _TREE_EDGE_TYPES)
+
+
+def _last_entry_of_types(tail: _Tail, types: "frozenset[str]") -> "Entry | None":
+    """The newest entry in *tail*'s window whose type is in *types*.
+
     Searched from the END, so a file with many turns costs one comparison per
-    trailing entry rather than a parse of the whole window. Entries that are
-    neither -- a turn, a tool, an in-flight closer landing after a teardown -- are
-    skipped: they say nothing about which state the unit is in, and the emitter
-    writes them after a close by design.
+    trailing entry rather than a parse of the whole window. Entries outside *types*
+    are skipped, and each caller brings its own set: the question "is this unit
+    closed" and the question "where does this slot hang" are answered from the same
+    bytes and must not share a vocabulary, because the first one authorizes a
+    delete.
 
     Reuses the window the tail scan already read, so this costs no second read.
     """
@@ -1306,7 +1381,7 @@ def _last_lifecycle_entry(tail: _Tail) -> "Entry | None":
         if parsed is None:
             continue
         entry = Entry.from_dict(parsed)
-        if entry is not None and entry.type in _LIFECYCLE_TYPES:
+        if entry is not None and entry.type in types:
             return entry
     return None
 

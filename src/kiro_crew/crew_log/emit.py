@@ -2653,6 +2653,106 @@ def on_class_observed(
     _submit(_job, "appending session/class", session_id)
 
 
+def on_session_adopted(
+    session_id: str,
+    *,
+    slot: str,
+    parent_slot: str,
+    parent_sid: str = "",
+    previous_parent_slot: str = "",
+    previous_parent_sid: str = "",
+) -> None:
+    """Record that *parent_slot* has TAKEN OVER the session *session_id*.
+
+    Written on the session that moved, which is the side ``session/opened.parent``
+    already puts a creating edge on -- so the tree reads one axis from one place, and a
+    takeover of a session that has children costs one entry rather than one per
+    descendant, because descendants cite this session's slot and not a path through it.
+
+    Nothing is rewritten, and nothing could be: the log is append-only, and the opening
+    entry states who OPENED the session, which stays true. This entry states who holds
+    it now, and the fold prefers the newest of the two.
+
+    ``previous_parent`` is recorded for a reader of the log and is not folded. It is
+    passed as two plain strings rather than a mapping so this signature says exactly
+    which values it accepts, and the ``sid`` half is omitted when the caller has none:
+    an empty string would read as a parent whose id is blank.
+
+    Returns without waiting, like every other emitter here. The projection is advanced
+    inside the job, AFTER the append succeeds -- durability first, then memory -- so the
+    disk can never hold a decision the memory lacks, and a lost write leaves the tree
+    where it was rather than moving it on the strength of an append that did not land.
+    """
+    if not session_id or not slot or not parent_slot:
+        # No slot is not a tree edge: the tree is keyed by slot, so an entry with
+        # neither side of the edge names nothing a reader could fold.
+        return
+    data: dict[str, Any] = {"parent": _parent_citation(parent_slot, parent_sid)}
+    previous = _parent_citation(previous_parent_slot, previous_parent_sid)
+    if previous:
+        data["previous_parent"] = previous
+
+    def _job() -> None:
+        log = _handle(session_id)
+        if log is None:
+            return
+        written = log.append("session/adopted", data, src=_SRC_GATEWAY)
+        _record_session_tree_decision(session_id, slot, written, parent_slot)
+
+    _submit(_job, "appending session/adopted", session_id)
+
+
+def on_session_released(
+    session_id: str,
+    *,
+    slot: str,
+    previous_parent_slot: str = "",
+    previous_parent_sid: str = "",
+) -> None:
+    """Record that the session *session_id* has been LET GO and is a root again.
+
+    The counterpart of :func:`on_session_adopted` and the only entry that takes a
+    parent edge away. A ``session/opened`` carrying no parent does not: it means that
+    entry did not repeat a creator, which a reader must not read as a retraction, so
+    the retraction needs a record of its own.
+
+    ``previous_parent`` is the parent that let it go, recorded for a reader and not
+    folded. It is optional because the entry's meaning does not depend on it: what this
+    says is that there is no parent NOW.
+    """
+    if not session_id or not slot:
+        return
+    data: dict[str, Any] = {}
+    previous = _parent_citation(previous_parent_slot, previous_parent_sid)
+    if previous:
+        data["previous_parent"] = previous
+
+    def _job() -> None:
+        log = _handle(session_id)
+        if log is None:
+            return
+        written = log.append("session/released", data, src=_SRC_GATEWAY)
+        _record_session_tree_decision(session_id, slot, written, None)
+
+    _submit(_job, "appending session/released", session_id)
+
+
+def _parent_citation(slot: str, sid: str) -> "dict[str, str]":
+    """One ``{slot, sid?}`` citation, or ``{}`` when there is no slot to cite.
+
+    ``sid`` is omitted rather than written empty, the same distinction
+    :func:`on_session_opened` keeps on its own ``parent``: an empty string would read
+    as a session whose id is blank, and "the gateway had no live handle for it" is a
+    different fact from that.
+    """
+    if not slot:
+        return {}
+    citation: dict[str, str] = {"slot": slot}
+    if sid:
+        citation["sid"] = sid
+    return citation
+
+
 def _candidate_is_same_slot(candidate_sid: str, slot: str) -> bool:
     """Whether *candidate_sid*'s crew log records *slot* as its own.
 
@@ -4684,8 +4784,10 @@ __all__ = [
     "on_message_sent",
     "on_model_selected",
     "on_request_configured",
+    "on_session_adopted",
     "on_session_closed",
     "on_session_opened",
+    "on_session_released",
     "on_step_completed",
     "on_step_started",
     "on_tool_called",
@@ -4703,6 +4805,42 @@ __all__ = [
 # ``_ensure_shutdown_hook`` on the first drain pass rather than here, so a launch
 # with the flag unset registers nothing at all. See that function for why first
 # use still puts this handler behind the executor's own.
+
+
+def _record_session_tree_decision(
+    session_id: str,
+    slot: str,
+    entry: Any,
+    parent_slot: "str | None",
+) -> None:
+    """Fold a just-committed ``session/adopted`` or ``session/released`` into the
+    in-memory session tree. ``parent_slot`` of ``None`` is the release.
+
+    Called immediately AFTER the append succeeded, for the reason
+    :func:`_record_session_tree_edge` is: the tree is a projection that applies deltas
+    and never rescans, so this line is what makes a takeover visible without waiting
+    for a cold start.
+
+    *entry* is what ``append`` returned, and its ``time`` is the value ON DISK. Reading
+    the clock here instead would order the fold by a moment the log does not record, so
+    a cold start replaying that same line could order it differently -- and the whole
+    point of the pair ``(at, sid)`` is that the two paths agree.
+
+    Never raises, and never logs at a level an operator has to act on: the append has
+    already succeeded, so the record is safe on disk whatever happens here, and a missed
+    fold is recovered by the projection's tail replay on the next cold start.
+    """
+    try:
+        from kiro_crew.crew_log.session_tree_projection import record_adopted, record_released
+
+        raw = getattr(entry, "time", 0)
+        at = raw if isinstance(raw, int) and not isinstance(raw, bool) else 0
+        if parent_slot:
+            record_adopted(session_id, slot, at, parent_slot)
+        else:
+            record_released(session_id, slot, at)
+    except Exception:  # pragma: no cover -- defensive; both doors guard themselves
+        logger.debug("session tree projection not advanced for %s", session_id, exc_info=True)
 
 
 def _record_session_tree_edge(

@@ -4420,6 +4420,54 @@ def _jev_route_baseline(slot: Any, client: Any) -> tuple[str, str, int]:
     return live_model, baseline, epoch
 
 
+def _jev_downgrade_refused(
+    state: DashboardState,
+    client: Any,
+    session_key: str,
+    model_route: Any,
+    *,
+    live_model: str,
+    target: str,
+    p: Any,
+) -> bool:
+    """Whether routing must NOT put this turn on *target*'s smaller context window.
+
+    Two rules, each only for a move to a SMALLER window, because the harm is
+    one-directional: a window at least as large changes nothing about what fits,
+    and an unknown one on either side is not evidence of a shrink.
+
+    The CONFIDENCE rule is the point's own floor. The FIT rule asks what the
+    session's context reading becomes once the window is the smaller one: the meter
+    is a percentage of the SERVED window, so the same transcript that sits well
+    inside a large one can land at or above this session's compaction threshold in a
+    small one, and that turn ends by handing the backend a history it replaces with
+    a summary no later switch back recovers.
+
+    *model_route* is the point module the caller already holds, passed rather than
+    imported here: the whole ``decisions`` package is reached lazily from this turn
+    path, and a second import statement would be a second place that decision holds.
+    """
+    current_window = model_route.known_window(live_model)
+    target_window = model_route.known_window(target)
+    if not model_route.permits_smaller_window(p, current=current_window, target=target_window):
+        return True
+    if current_window is None or target_window is None or target_window >= current_window:
+        return False
+    try:
+        used = int(client.context_used_tokens() or 0)
+        limit = float(state.sessions.effective_autocompact_pct(session_key))
+    except Exception:
+        # A provider with no meter, or a threshold that cannot be read, leaves this
+        # rule no reading to refuse on, and inventing one refuses on a guess.
+        logger.debug("model.route: no context reading for the fit rule", exc_info=True)
+        return False
+    # A zero reading is "not measured yet" -- the state a fresh session and a
+    # just-compacted one share -- rather than an empty history.
+    if used <= 0:
+        return False
+    return used / target_window * 100.0 >= limit
+
+
 async def _route_model_for_turn(
     state: DashboardState,
     slot: _ChatSlot,
@@ -4496,12 +4544,15 @@ async def _route_model_for_turn(
     # slot's own cache the older fact, and then neither value may be read from it.
     # ``_epoch`` is that call's pick-epoch reading, re-read inside the locks below.
     _live_model, _baseline, _epoch = _jev_route_baseline(slot, client)
+    # Read once: the same list answers what the tier may route to and where a
+    # refused downgrade may land.
+    _advertised = provider_advertised_ids(client)
     try:
         routed = await model_route.routed_model(
             message,
             session_key=session_key,
             current_model=_baseline,
-            advertised=provider_advertised_ids(client),
+            advertised=_advertised,
             history_source=_route_history_source(state, session_key),
         )
     except asyncio.CancelledError:
@@ -4532,8 +4583,57 @@ async def _route_model_for_turn(
     if not _target:
         await asyncio.to_thread(model_route.record_outcome, session_key, routed)
         return
+
+    async def _record_refused() -> None:
+        """The refusal's own row: the suppressed tier and the probability it came
+        with, in the shape every other dropped tier takes. Written at each exit that
+        DISCARDS the tier rather than once up front, because the locked re-pick guard
+        below drops the whole answer, and a row already appended for it would outlive
+        a decision nothing acted on. Off the loop, and never published -- the answer a
+        receipt would show is the one that was refused."""
+        await asyncio.to_thread(
+            model_route.record_error,
+            session_key,
+            turn_id=str(routed.get("turn_id") or ""),
+            tier=str(routed.get("tier") or ""),
+            latency_ms=int(routed.get("latency_ms") or 0),
+            error=model_route.ERROR_WINDOW_REFUSED,
+            p=routed.get("p"),
+        )
+
+    # The window rules apply to a TIER's model only. An unpinned tier's restore goes
+    # to the model the session ran on with routing off, which is the owner's own
+    # choice rather than a shrink this seam chose.
+    _refused = bool(_chosen) and _jev_downgrade_refused(
+        state,
+        client,
+        session_key,
+        model_route,
+        live_model=_live_model,
+        target=_target,
+        p=routed.get("p"),
+    )
+    if _refused:
+        _landing = model_route.downgrade_landing(
+            model_route.tier_models(),
+            _advertised,
+            current_window=model_route.known_window(_live_model),
+            baseline=_baseline,
+        )
+        # A landing the session is already on is the refusal itself: nothing to ask
+        # the provider for, and the turn keeps the room it has.
+        _target = _landing if _landing and _landing != _live_model else ""
+        if not _target:
+            await _record_refused()
+            return
     set_model_fn = resolve_substitute_set_model(client)
     if set_model_fn is None:
+        if _refused:
+            # The tier was refused before a seam was looked for, so the refusal is
+            # what discarded it; a row naming the seam would report a tier this path
+            # never asked the provider to apply.
+            await _record_refused()
+            return
         if not _chosen:
             # Nothing was asked of the provider anyway: the tier applied nothing, and
             # a restore that cannot be expressed is the same no-op a refusal is. So
@@ -4611,6 +4711,11 @@ async def _route_model_for_turn(
             slot.key,
             type(exc).__name__,
         )
+        if _refused:
+            # The landing is where the refusal sends the turn, so a failure to reach
+            # it does not turn the refused tier into a failed switch.
+            await _record_refused()
+            return
         if not _chosen:
             # A failed RESTORE, not a failed apply: the tier is unpinned, so an error
             # row would name a tier that was never switched to and the strip would
@@ -4630,6 +4735,9 @@ async def _route_model_for_turn(
             latency_ms=int(routed.get("latency_ms") or 0),
             error=model_route.ERROR_SWITCH_FAILED,
         )
+        return
+    if _refused:
+        await _record_refused()
         return
     # Written and published only once the switch has landed, so the strip and the
     # log describe the model the turn actually ran on. Off the loop: the row is a

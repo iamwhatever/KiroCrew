@@ -62,6 +62,7 @@ import uuid
 from typing import Any, Callable, Mapping, Sequence
 
 from kiro_crew import decisions as core
+from kiro_crew import model_registry
 from kiro_crew.decisions import log as _log
 from kiro_crew.decisions.points import build_history, history_budget, prior_turns
 from kiro_crew.decisions.types import Answer, Choice, Question
@@ -101,11 +102,28 @@ TIER_DESCRIPTIONS: dict[str, str] = {
     ),
 }
 
+#: The one prompt sentence that is not a tier description: which way an error
+#: costs more. It names no model and no price, the rule the descriptions above
+#: follow, so the oracle judges the work rather than pricing the turn.
+TIER_ASYMMETRY = (
+    "Being wrong in the two directions does not cost the same. A turn put in a "
+    "lower tier than it needs gets less room to work in and a worse answer; a "
+    "turn put higher only costs more. So answer simple only when the request is "
+    "self-contained and you can see the whole of it -- a request that is a plan, "
+    "a judgement call, several instructions at once, or that names work you "
+    "cannot see, is not simple however short it is."
+)
+
 #: Characters of the current message sent with the question -- the SAME bound
 #: ``skills.select`` applies, because it is the same text answering a question
 #: about the same turn, and two different excerpt sizes would mean the consent
 #: text describes one of them.
 MAX_MESSAGE_CHARS = 2000
+
+#: Lowest tier probability that may move a turn to a SMALLER context window. A
+#: CONSTANT for ``memory.recall``'s reason: it is the meaning of the answer
+#: rather than a knob, and a configurable one could turn the guard off unseen.
+MIN_DOWNGRADE_P = 0.80
 
 #: Every tier unpinned. No model id is hardcoded here, because one an account is
 #: not entitled to fails on the first prompt
@@ -134,6 +152,11 @@ UNPINNED = ""
 ERROR_UNKNOWN_MODEL = "model-not-advertised"
 ERROR_NO_SWITCH = "no-switch-seam"
 ERROR_SWITCH_FAILED = "switch-failed"
+
+#: A downgrade the window rules refused: the tier's model has a SMALLER context
+#: window than the session's, and either the answer is under
+#: :data:`MIN_DOWNGRADE_P` or the turn's own history would not fit there.
+ERROR_WINDOW_REFUSED = "smaller-window-refused"
 
 #: The module the strip hand-off lives in, resolved by name at call time so a
 #: build without it is a no-op rather than an import error on a turn path.
@@ -170,7 +193,8 @@ def questions() -> list[Question]:
     return [
         Choice(
             QUESTION_ID,
-            "How hard is this request for an AI coding assistant? " f"Answer one of: {described}.",
+            "How hard is this request for an AI coding assistant? "
+            f"Answer one of: {described}. {TIER_ASYMMETRY}",
             options=list(TIERS),
         )
     ]
@@ -266,8 +290,6 @@ def _same_model(left: str, right: str) -> bool:
     the frontend's ``normalizeModelKey`` fallback exactly.
     """
     try:
-        from kiro_crew import model_registry
-
         canonical_left = model_registry.canonical_key(left)
         canonical_right = model_registry.canonical_key(right)
         if canonical_left and canonical_right:
@@ -275,6 +297,72 @@ def _same_model(left: str, right: str) -> bool:
     except Exception:
         logger.debug("model.route: canonical model comparison unavailable", exc_info=True)
     return left.strip().lower().replace(".", "-") == right.strip().lower().replace(".", "-")
+
+
+def known_window(model_id: str) -> int | None:
+    """*model_id*'s context window in tokens when the registry KNOWS it, else ``None``.
+
+    ``has_known_window`` is the gate rather than ``model_window`` alone, which
+    answers a guessed reference for an id it does not list: vetoing a switch on a
+    guess pins routing to the session's own model for every unlisted one.
+    """
+    name = str(model_id or "").strip()
+    if not name:
+        return None
+    try:
+        if not model_registry.has_known_window(name):
+            return None
+        found = model_registry.model_window(name)
+    except Exception:
+        logger.debug("model.route: no known window for %r", model_id, exc_info=True)
+        return None
+    return found if isinstance(found, int) and found > 0 else None
+
+
+def permits_smaller_window(p: float | None, *, current: int | None, target: int | None) -> bool:
+    """Whether a tier's model may be applied, given the two context windows.
+
+    ``True`` for every move to a window at least as large as the current one: the
+    harm is one-directional, and room that does not shrink changes nothing about
+    what fits. ``True`` as well when either window is unknown (``None``), which is
+    :func:`known_window`'s answer for a model the registry has not met -- refusing
+    there makes routing inert on exactly the models nothing is known about.
+
+    A SMALLER window needs the answer's own probability at :data:`MIN_DOWNGRADE_P`
+    or above. An absent one does not clear it: the rule asks the answer to carry
+    the move, and a row with no number carries nothing. The floor sits in a gap
+    rather than on a slope -- tier answers cluster below 0.75 and above 0.86.
+    """
+    if current is None or target is None or target >= current:
+        return True
+    if not isinstance(p, (int, float)) or isinstance(p, bool):
+        return False
+    return float(p) >= MIN_DOWNGRADE_P
+
+
+def downgrade_landing(
+    mapping: Mapping[str, str],
+    advertised: Sequence[str],
+    *,
+    current_window: int | None,
+    baseline: str = "",
+) -> str:
+    """Where a refused downgrade lands: the ``medium`` pin, *baseline*, or ``""``.
+
+    ONE gear up rather than the dearest tier, because a probability under the
+    floor says the tier is not settled -- not that the turn is hard. The medium pin
+    is taken only while its own window is not smaller than the session's: an owner
+    may pin two tiers to one model, and landing on the very window the rules just
+    refused would answer the refusal with itself.
+
+    *baseline* is taken as given, window unread: it is what this turn would have
+    used with routing off, so keeping room the owner's own choice does not have is
+    not this point's call. ``""`` is "leave the model alone".
+    """
+    medium = resolve_model(TIER_MEDIUM, mapping, advertised)
+    if medium and permits_smaller_window(None, current=current_window, target=known_window(medium)):
+        return medium
+    return str(baseline or "")
 
 
 async def routed_model(
@@ -445,7 +533,13 @@ def publish_outcome(session_key: str | None, outcome: dict[str, Any]) -> bool:
 
 
 def record_error(
-    session_key: str | None, *, turn_id: str, tier: str, latency_ms: int, error: str
+    session_key: str | None,
+    *,
+    turn_id: str,
+    tier: str,
+    latency_ms: int,
+    error: str,
+    p: float | None = None,
 ) -> None:
     """One row for a tier that arrived and could not be applied. Never raises.
 
@@ -453,7 +547,14 @@ def record_error(
     routing for a receipt to describe and no pair of models for a reader to rate.
     Blocking (the append is filesystem IO), so a caller on the event loop hands it
     to a thread.
+
+    *p* is the refused answer's own probability, recorded when the category is
+    about the ANSWER rather than about a model id: a reader tells the two window
+    rules apart by whether that number clears the floor.
     """
+    extra: dict[str, Any] = {"turn_id": turn_id, "tier": tier}
+    if p is not None:
+        extra["p"] = p
     try:
         _log.append(
             _log.build_row(
@@ -461,7 +562,7 @@ def record_error(
                 session_key=session_key,
                 latency_ms=latency_ms,
                 error=error,
-                extra={"turn_id": turn_id, "tier": tier},
+                extra=extra,
             )
         )
     except Exception:

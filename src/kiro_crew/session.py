@@ -2367,6 +2367,14 @@ class SessionManager:
         """Delegate context accounting and compaction triggering."""
         return self._compaction.check_context_usage(key, provider)
 
+    def effective_autocompact_pct(self, key: str) -> float:
+        """Delegate *key*'s live compaction threshold: its override, else the global.
+
+        The READ half of :meth:`set_autocompact_pct`, for a caller that must know
+        what a context reading fires at before it changes that reading's window.
+        """
+        return self._compaction.effective_autocompact_pct(key)
+
     def set_autocompact_pct(self, key: str, pct: float | None) -> None:
         """Set or clear (``None``) *key*'s per-session compaction threshold.
 

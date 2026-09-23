@@ -1208,10 +1208,21 @@ class TestReturnToBaselineAfterIncompleteSweep:
         pending_b = sessions.pending_identity_sweep_fingerprint
         assert pending_b and pending_b != fp_a
 
-        # Back to A. The baseline now MATCHES the live account, so the identity
-        # predicate reports no change -- the B successors are reachable only
-        # through the outstanding sweep.
+        # Back to A. The baseline now MATCHES the live account, but TWO
+        # independent triggers still reach the B successors: the gate's own
+        # fresh read observed B and latched (the interim-identity latch), and
+        # the incomplete sweep recorded B as the pending fingerprint. Either
+        # alone forces the retry; both are pinned here.
         _write_store(db)
+        assert (await service.identity_changed_since_sessions())[
+            0
+        ] is True, "the observed interim account must latch and report changed"
+
+        # Isolate the pending-fingerprint retry: with the latch cleared (as if
+        # the observation had never happened), the identity predicate reports
+        # no change -- and the B holders must STILL be swept via the pending
+        # fingerprint alone.
+        service._interim_identity_observed = False
         assert (await service.identity_changed_since_sessions())[0] is False
 
         await chat_runner._retire_sessions_on_identity_change(state)
@@ -2362,3 +2373,477 @@ class TestWarmPoolIdentityFence:
         assert retired == []
         assert complete is True
         assert smap._pool._pool_identity_epoch > 0.0
+
+
+class TestBootSeededSessionBaseline:
+    """Seeding at boot replaces the once-per-lifetime unset-baseline sweep.
+
+    The unset baseline deliberately reads as changed (an unknown baseline must
+    not resolve to "the children match"), which was designed to cost one sweep
+    per gateway lifetime. On a live gateway that sweep's completion
+    precondition -- nothing busy, nothing mid-start, no runtime surviving -- is
+    routinely unsatisfiable: the sweep retires idle sessions, dashboard slots
+    eagerly respawn them, the in-flight starts keep the NEXT sweep incomplete,
+    and the baseline never advances. Every turn then re-triggers retirement,
+    recycling healthy just-spawned children forever.
+
+    Seeding the baseline at startup, BEFORE anything can spawn a kiro-backed
+    child, removes the boot sweep without weakening the guarantee: every child
+    necessarily postdates the seed read, so the account it authenticated under
+    is the seeded one or a later one -- and a later one compares unequal, which
+    is exactly the change the sweep exists to catch.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_seeded_baseline_reports_unchanged(self, tmp_path: Path) -> None:
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        _write_store(db)
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+
+        assert await service.seed_sessions_baseline() is True
+
+        changed, live = await service.identity_changed_since_sessions()
+        assert changed is False
+        assert live != ""
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_store_is_never_seeded(self, tmp_path: Path) -> None:
+        """No store means no seed: the fail-safe unset-baseline sweep survives.
+
+        Seeding "" would make "cannot tell" the accepted steady state -- every
+        later account switch would compare equal to "" and go undetected. The
+        unset baseline instead re-sweeps each turn, bounding how long a child
+        can outlive the account it loaded.
+        """
+
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+
+        assert await service.seed_sessions_baseline() is False
+
+        changed, live = await service.identity_changed_since_sessions()
+        assert changed is True
+        assert live == ""
+
+    @pytest.mark.asyncio
+    async def test_a_hung_store_read_refuses_the_seed_within_the_bound(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stalled store must not stall gateway boot.
+
+        The seed's await sits on the startup path ahead of the listeners
+        binding, so a hung store (locked SQLite, stalled network filesystem)
+        must cost boot at most the deadline -- and the refusal must fall back
+        to the existing fail-safe unset-baseline sweep, never to a guessed
+        baseline.
+        """
+
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+
+        async def _hang(*, allow_cached: bool = True) -> str:
+            await asyncio.sleep(30)
+            return "never-reached"
+
+        monkeypatch.setattr(service, "current_identity_fingerprint", _hang)
+        monkeypatch.setattr(kp, "_SEED_BASELINE_TIMEOUT_SECS", 0.05)
+
+        assert await service.seed_sessions_baseline() is False
+
+    @pytest.mark.asyncio
+    async def test_a_switch_after_seeding_is_still_detected(self, tmp_path: Path) -> None:
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        _write_store(db)
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+        await service.seed_sessions_baseline()
+
+        _write_store(
+            db,
+            start_url="https://personal.awsapps.com/start",
+            profile="arn:aws:codewhisperer:us-east-1:2222:profile/PERSONAL",
+        )
+        _expire_identity_cache(service)
+
+        changed, live = await service.identity_changed_since_sessions()
+        assert changed is True
+        assert live != ""
+
+    @pytest.mark.asyncio
+    async def test_a_sign_out_after_seeding_is_still_detected(self, tmp_path: Path) -> None:
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        _write_store(db)
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+        await service.seed_sessions_baseline()
+
+        con = sqlite3.connect(str(db))
+        with con:
+            con.execute("DELETE FROM auth_kv")
+            con.execute("DELETE FROM state")
+        con.close()
+        _expire_identity_cache(service)
+
+        changed, live = await service.identity_changed_since_sessions()
+        assert changed is True
+        assert live == ""
+
+    @pytest.mark.asyncio
+    async def test_seeding_never_overwrites_a_recorded_baseline(self, tmp_path: Path) -> None:
+        """A pending change must not be masked by a late seed call."""
+
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        _write_store(db)
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+        service.note_sessions_reconciled("fingerprint-of-a-previous-account")
+
+        assert await service.seed_sessions_baseline() is False
+
+        changed, _ = await service.identity_changed_since_sessions()
+        assert changed is True
+
+    @pytest.mark.asyncio
+    async def test_a_second_seed_is_a_noop(self, tmp_path: Path) -> None:
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        _write_store(db)
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+
+        assert await service.seed_sessions_baseline() is True
+        assert await service.seed_sessions_baseline() is False
+
+    @pytest.mark.asyncio
+    async def test_assume_ready_seeding_is_a_noop(self, tmp_path: Path) -> None:
+        service = kp.KiroPrerequisiteService(
+            home=tmp_path, environ={}, platform_name="linux", assume_ready=True
+        )
+
+        assert await service.seed_sessions_baseline() is False
+
+        changed, _ = await service.identity_changed_since_sessions()
+        assert changed is False
+
+    @pytest.mark.asyncio
+    async def test_a_seeded_first_turn_never_marks_a_busy_session(self, tmp_path: Path) -> None:
+        """The end-to-end repro of the retire/respawn loop, fixed at its root.
+
+        Pre-fix: turn 1 reads the unset baseline as changed, the sweep marks the
+        busy session ``retire_on_identity_change`` (guaranteeing a recycle at its
+        next turn) and reports incomplete, so the baseline never advances and
+        every later turn repeats it. Post-fix: the seeded baseline compares
+        equal, no sweep fires, the busy session is untouched.
+        """
+
+        from kiro_crew.config import KiroCrewConfig
+        from kiro_crew.session import SessionManager, _Session
+
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        _write_store(db)
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+        await service.seed_sessions_baseline()
+
+        smap = SessionManager(KiroCrewConfig())
+        busy = _Session(provider=_FakeProvider(""))  # type: ignore[arg-type]
+        busy.semaphore._value = 0  # type: ignore[attr-defined]
+        smap._sessions["busy"] = busy
+
+        # The turn path's decision, exactly as _retire_sessions_on_identity_change
+        # takes it: no change and no pending sweep means no retirement call.
+        changed, _ = await service.identity_changed_since_sessions()
+        assert changed is False
+        assert getattr(smap, "pending_identity_sweep_fingerprint", "") == ""
+        assert busy.retire_on_identity_change is False
+
+    @pytest.mark.asyncio
+    async def test_an_unseeded_busy_gateway_re_sweeps_every_turn(self, tmp_path: Path) -> None:
+        """Characterizes the defect the seed removes (and the fail-safe kept).
+
+        With no seed and a perpetually-busy session, the sweep can never
+        complete, the baseline never advances, and every turn re-triggers
+        retirement. This remains the DESIRED behaviour for the one case the
+        seed refuses: a store that cannot be fingerprinted.
+        """
+
+        from kiro_crew.config import KiroCrewConfig
+        from kiro_crew.session import SessionManager, _Session
+
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        _write_store(db)
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+
+        smap = SessionManager(KiroCrewConfig())
+        busy = _Session(provider=_FakeProvider(""))  # type: ignore[arg-type]
+        busy.semaphore._value = 0  # type: ignore[attr-defined]
+        smap._sessions["busy"] = busy
+
+        for _turn in range(3):
+            changed, live = await service.identity_changed_since_sessions()
+            assert changed is True
+            retired, complete = await smap.retire_kiro_identity_sessions(fingerprint=live)
+            assert retired == []
+            assert complete is False
+            # The incomplete sweep never advances the baseline (mirrors the
+            # caller's `if complete and live` gate), so the loop repeats.
+
+        assert busy.retire_on_identity_change is True
+
+    def test_both_startup_sites_seed_before_serving(self) -> None:
+        """Every place that constructs the service must seed it immediately.
+
+        A construction site without a seed re-introduces the boot sweep for
+        that entrypoint. Counted rather than AST-walked: the construction is
+        spelled identically at both sites.
+        """
+
+        source = (
+            Path(__file__).parents[1] / "src" / "kiro_crew" / "dashboard" / "server.py"
+        ).read_text(encoding="utf-8")
+        constructions = source.count("KiroPrerequisiteService,")
+        seeds = source.count("seed_sessions_baseline()")
+        assert constructions >= 2, "expected both startup sites to construct the service"
+        assert seeds >= constructions, (
+            f"{constructions} construction site(s) but only {seeds} seed call(s): "
+            "a site that skips seed_sessions_baseline re-introduces the boot sweep loop"
+        )
+
+
+class TestInterimIdentityLatch:
+    """An observed A->B->A round trip must still trigger the retirement sweep.
+
+    The baseline comparison alone is blind to a round trip: seed A -> switch
+    to B (a child spawns under B on a non-sweep path) -> switch back to A
+    compares equal to the baseline, and the B-authenticated child serves the
+    next turn. The latch records any fresh read that observed a DIFFERENT
+    signed-in account and reports changed until a sweep completes, whatever
+    the store says by then.
+
+    The latch's own hazard is the mirror image: a sticky flag armed by a
+    TRANSIENT read failure would force retire-until-complete sweeps on a
+    healthy host -- re-creating the perpetual recycle loop the seeded
+    baseline exists to remove. Half these tests therefore pin the refusals:
+    component LOSS (an unreadable CLI store, a vanished vault component)
+    never latches; only a component that appears or changes does, because
+    reads lose components under failure, they do not gain them.
+    """
+
+    _PERSONAL = {
+        "start_url": "https://personal.awsapps.com/start",
+        "profile": "arn:aws:codewhisperer:us-east-1:2222:profile/PERSONAL",
+    }
+
+    async def _seeded_service(self, tmp_path: Path) -> "kp.KiroPrerequisiteService":
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        _write_store(db)
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+        assert await service.seed_sessions_baseline() is True
+        return service
+
+    @pytest.mark.asyncio
+    async def test_a_round_trip_observed_by_a_poll_still_sweeps(self, tmp_path: Path) -> None:
+        """Switch A->B, a poll observes B, switch back to A: changed reports True."""
+
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        service = await self._seeded_service(tmp_path)
+
+        _write_store(db, **self._PERSONAL)
+        _expire_identity_cache(service)
+        # Any fresh read is an observer -- here, the status surface's poll.
+        observed = await service.current_identity_fingerprint(allow_cached=False)
+        assert observed != ""
+
+        _write_store(db)  # back to the seeded account
+        _expire_identity_cache(service)
+
+        changed, live = await service.identity_changed_since_sessions()
+        assert changed is True, "the observed interim account must force a sweep"
+        assert live != ""
+
+    @pytest.mark.asyncio
+    async def test_a_complete_sweep_clears_the_latch_and_turns_go_quiet(
+        self, tmp_path: Path
+    ) -> None:
+        """Reconciliation resolves the observation; later turns must NOT re-sweep.
+
+        The loop guard: if the latch survived reconciliation, every turn on a
+        healthy host would retire healthy children forever -- the exact
+        pathology the seeded baseline removes.
+        """
+
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        service = await self._seeded_service(tmp_path)
+
+        _write_store(db, **self._PERSONAL)
+        _expire_identity_cache(service)
+        await service.current_identity_fingerprint(allow_cached=False)
+        _write_store(db)
+        _expire_identity_cache(service)
+
+        changed, live = await service.identity_changed_since_sessions()
+        assert changed is True
+        service.note_sessions_reconciled(live)
+
+        for _ in range(3):
+            _expire_identity_cache(service)
+            changed, _ = await service.identity_changed_since_sessions()
+            assert changed is False, "a reconciled latch must not keep forcing sweeps"
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_cli_store_blip_never_latches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A transient read failure is not an interim account.
+
+        An unreadable store reads as absent; latching on it would make one
+        blip sticky until a fully-quiescent sweep, which a live gateway may
+        never produce. The blip itself still reports changed (non-sticky,
+        existing behaviour) for as long as it persists -- but once the store
+        reads fine again, turns must be quiet.
+        """
+
+        service = await self._seeded_service(tmp_path)
+
+        real_fingerprint = kp.identity_fingerprint
+
+        def _blip(path: object) -> str:
+            raise OSError("database is locked")
+
+        monkeypatch.setattr(kp, "identity_fingerprint", _blip)
+        _expire_identity_cache(service)
+        changed, live = await service.identity_changed_since_sessions()
+        assert changed is True  # non-sticky: absent differs from the baseline
+        assert live == ""
+
+        monkeypatch.setattr(kp, "identity_fingerprint", real_fingerprint)
+        _expire_identity_cache(service)
+        changed, _ = await service.identity_changed_since_sessions()
+        assert changed is False, "a recovered blip must not leave a sticky latch"
+
+    @pytest.mark.asyncio
+    async def test_a_vanished_vault_component_never_latches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Vault component lost while the CLI account matches: refused.
+
+        An unreadable vault reads as empty, indistinguishable from a vault
+        sign-out, so a sticky latch on component loss would arm on a blip.
+        """
+
+        monkeypatch.setattr(kp, "_crew_vault_fingerprint", lambda: "vault-A")
+        service = await self._seeded_service(tmp_path)
+
+        monkeypatch.setattr(kp, "_crew_vault_fingerprint", lambda: "")
+        _expire_identity_cache(service)
+        changed, _ = await service.identity_changed_since_sessions()
+        assert changed is True  # non-sticky: the combined digest differs
+
+        monkeypatch.setattr(kp, "_crew_vault_fingerprint", lambda: "vault-A")
+        _expire_identity_cache(service)
+        changed, _ = await service.identity_changed_since_sessions()
+        assert changed is False, "a recovered vault must not leave a sticky latch"
+
+    @pytest.mark.asyncio
+    async def test_a_vault_identity_round_trip_latches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A vault component that APPEARS is a real interim identity, not a blip.
+
+        Reads lose components under failure; they do not gain them. A Crew
+        sign-in that lands and is reverted between two turns leaves children
+        holding its credential, exactly like a CLI round trip.
+        """
+
+        service = await self._seeded_service(tmp_path)
+
+        monkeypatch.setattr(kp, "_crew_vault_fingerprint", lambda: "vault-INTERIM")
+        _expire_identity_cache(service)
+        await service.current_identity_fingerprint(allow_cached=False)
+
+        monkeypatch.setattr(kp, "_crew_vault_fingerprint", lambda: "")
+        _expire_identity_cache(service)
+        changed, _ = await service.identity_changed_since_sessions()
+        assert changed is True, "an observed interim vault identity must force a sweep"
+
+    @pytest.mark.asyncio
+    async def test_a_vault_only_round_trip_latches_with_no_cli_store(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A vault-only gateway must still catch a vault A->B->A round trip.
+
+        With no CLI store at all, the CLI component is permanently absent --
+        but a vault component that CHANGES to a different nonempty value
+        cannot be a read blip (reads lose components under failure; they do
+        not gain or alter them). Refusing to latch whenever the CLI is absent
+        would make the entire latch inert on vault-only hosts, leaving
+        B-authenticated children alive after the round trip.
+        """
+
+        # No _write_store: the CLI store never exists on this host.
+        monkeypatch.setattr(kp, "_crew_vault_fingerprint", lambda: "vault-A")
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+        assert await service.seed_sessions_baseline() is True
+
+        monkeypatch.setattr(kp, "_crew_vault_fingerprint", lambda: "vault-B")
+        _expire_identity_cache(service)
+        # A status poll observes the interim vault account.
+        observed = await service.current_identity_fingerprint(allow_cached=False)
+        assert observed != ""
+
+        monkeypatch.setattr(kp, "_crew_vault_fingerprint", lambda: "vault-A")
+        _expire_identity_cache(service)
+        changed, _ = await service.identity_changed_since_sessions()
+        assert changed is True, "a vault-only interim account must force a sweep"
+
+    @pytest.mark.asyncio
+    async def test_a_vault_only_blip_never_latches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Vault-only host, vault read blips to empty: refused, no sticky latch.
+
+        The loop guard for the vault-only arm: an empty vault under an absent
+        CLI is indistinguishable from a transient vault read failure, so it
+        must not arm the sticky flag -- only a nonempty, DIFFERENT vault does.
+        Once the vault reads fine again, turns must be quiet.
+        """
+
+        monkeypatch.setattr(kp, "_crew_vault_fingerprint", lambda: "vault-A")
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+        assert await service.seed_sessions_baseline() is True
+
+        monkeypatch.setattr(kp, "_crew_vault_fingerprint", lambda: "")
+        _expire_identity_cache(service)
+        changed, _ = await service.identity_changed_since_sessions()
+        assert changed is True  # non-sticky: the combined digest differs
+
+        monkeypatch.setattr(kp, "_crew_vault_fingerprint", lambda: "vault-A")
+        _expire_identity_cache(service)
+        changed, _ = await service.identity_changed_since_sessions()
+        assert changed is False, "a recovered vault-only blip must not leave a sticky latch"
+
+    @pytest.mark.asyncio
+    async def test_an_unobserved_round_trip_remains_undetected(self, tmp_path: Path) -> None:
+        """Pins the documented residual boundary.
+
+        A round trip with NO fresh read during the interim window is invisible
+        to a gateway-wide observer by construction; the complete fix is the
+        per-child allocation stamp (the documented follow-up). This test
+        exists so a future change that closes the hole flips it consciously.
+        """
+
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        service = await self._seeded_service(tmp_path)
+
+        _write_store(db, **self._PERSONAL)
+        _write_store(db)  # round trip completes with no read in between
+        _expire_identity_cache(service)
+
+        changed, _ = await service.identity_changed_since_sessions()
+        assert changed is False
+
+    @pytest.mark.asyncio
+    async def test_a_stable_identity_never_latches_across_repeated_reads(
+        self, tmp_path: Path
+    ) -> None:
+        """The healthy-host invariant: no observation, no latch, no sweeps."""
+
+        service = await self._seeded_service(tmp_path)
+
+        for _ in range(5):
+            _expire_identity_cache(service)
+            await service.current_identity_fingerprint(allow_cached=False)
+            changed, _ = await service.identity_changed_since_sessions()
+            assert changed is False

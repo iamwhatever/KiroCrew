@@ -430,7 +430,15 @@ def _url_payload_command(n: int) -> str:
 #: credential and outbound-URL spans on the same text and rewrites it once. It is new
 #: behaviour, not moved code, so no other file shrinks to pay for it, and it belongs in
 #: this package because egress code must reach the raw passes only through it.
-_PACKAGE_LINE_BUDGET = 32_056
+#:
+#: Raised again, from 32,056, for the shell-expansion bypass gate (GHSA-x2m8-5ff9-f479):
+#: ``_imds_access_via_expansion`` in ``exfil.py`` with its module note refuses a dotted
+#: IMDS token one of whose octets splices a ``$(``/``${`` expansion, and the
+#: ``/dev/tcp via shell expansion`` row in ``exfil_bash.py`` refuses a ``/dev/tc``/``/dev/ud``
+#: device name carrying one. The ``/dev/`` path is anchored as ABSOLUTE and at least one
+#: literal IMDS octet is required, so all-expansion version strings and ``~/dev/tcl`` home
+#: paths are not over-blocked. No existing pattern, threshold or pass moved.
+_PACKAGE_LINE_BUDGET = 32_167
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

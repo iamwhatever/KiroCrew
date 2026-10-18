@@ -77,6 +77,24 @@ _BASH_EXFIL_RES: list[tuple[re.Pattern[str], str]] = [
     # `-T`: curl's upload flag is uppercase, so this does NOT match lowercase long
     # options such as `--trace-time`. `-T` must begin at a word boundary.
     (re.compile(r"\bcurl\b.*(?:^|\s)-T\s*\S"), "curl -T upload"),
+    # /dev/tcp//dev/udp reverse shell spliced with a shell EXPANSION. The deny
+    # view stops before expansion, so the literal `/dev/tcp/` substring (matched
+    # by the `/dev/tcp/` pattern above) is absent while bash still forms the
+    # pseudo-device at run time: `/dev/tc$(printf p)/host/port`, `/dev/tc${X}p/…`,
+    # even `/dev/tcp$(printf /)…` (the trailing slash expanded). The shape is a
+    # `/dev/tc`/`/dev/ud` device NAME carrying a `$(` / `${` substitution before
+    # its next path separator; a benign `/dev/null`, `/dev/stdin` or `/dev/fd/N`
+    # never splices one into the device name, and a quote-only split
+    # (`/dev/tc"p"/`) carries no substitution so it stays the deny tier's job.
+    # Only the unexpanded command text is matched -- no expanded bytes are logged.
+    #
+    # The device path must be ABSOLUTE. bash's reverse-shell magic fires only for
+    # the literal `/dev/tcp` device, so `/dev/` is anchored with a negative
+    # lookbehind `(?<![\w.~-])`: a leading `/dev/` (start of command, or after a
+    # space or a `>`/`<` redirection) matches, but a `/dev/tc` substring inside a
+    # relative or home path -- `~/dev/tcl${V}`, `./dev/tc${x}`, `proj/dev/udp${v}`
+    # -- does not, since that is an ordinary directory, never the pseudo-device.
+    (re.compile(r"(?<![\w.~-])/dev/(?:tc|ud)[^\s/]*(?:\$\(|\$\{)"), "/dev/tcp via shell expansion"),
 ]
 
 
@@ -110,6 +128,7 @@ _BASH_EXFIL_RULE_BY_LABEL: dict[str, tuple[str, ...]] = {
     "nc/ncat file redirect": ("data-exfil-nc-file-redirect",),
     "nc/ncat reverse shell": ("reverse-shell-nc", "reverse-shell-ncat"),
     "curl -T upload": ("data-exfil-curl-upload",),
+    "/dev/tcp via shell expansion": ("reverse-shell-devtcp",),
 }
 
 #: For a label whose regex spans several catalog rows, the token that identifies

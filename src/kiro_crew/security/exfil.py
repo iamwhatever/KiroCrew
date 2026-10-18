@@ -1446,6 +1446,95 @@ _IMDS_IP = "169.254.169.254"
 # SSRF gate which also blocks it (CWE-918 dual-stack parity).
 _IMDS_IPV6 = "fd00:ec2::254"
 
+# ── IMDS via shell EXPANSION (CWE-185 / CWE-693) ──
+# The deny view deliberately stops BEFORE shell expansion (parameter ``${X}``,
+# arithmetic ``$((..))``, command ``$(..)``), so a dotted token that splices an
+# expansion into an octet -- ``169.254.169.25$((2+2))``, ``169.254.169.2${X}54``,
+# ``169.254.169.25$(printf 4)`` -- reaches this gate with that octet UNEXPANDED,
+# and the literal ``169.254.169.254`` the canonicalizer looks for never appears.
+# bash still produces the real bytes at run time. Treat an expansion standing in
+# an octet slot as a WILDCARD for that octet: when every other octet equals IMDS
+# in its position, the token can expand to ``169.254.169.254`` at run time, so
+# refuse it. Only the UNEXPANDED token is examined and logged -- the deny view's
+# reason for stopping before expansion (host-dependent output, writing the
+# operator's real bytes into the audit trail) is sound and preserved here.
+#
+# Linear by construction (no ReDoS): the scanner is ONE character class OR a
+# whole expansion -- two DISJOINT alternatives, since an expansion always opens
+# with ``$`` and the class never contains ``$`` -- so each step advances by one
+# token with no ambiguous ``\d+``/``\d+`` overlap and no ``\d+\.`` run to
+# backtrack over. Each expansion body is a bounded, non-nested character class.
+# Splitting and the per-octet compare are plain Python, and a command with no
+# expansion marker short-circuits before the scan runs at all.
+_SHELL_EXPANSION = r"\$\(\([^()]*\)\)|\$\([^()]*\)|\$\{[^{}]*\}"
+# Collapse each WHOLE expansion to one sentinel, so an expansion that itself
+# contains a dot (``$(printf 2.54)``) cannot split one octet into two.
+_SHELL_EXPANSION_SUB_RE = re.compile(_SHELL_EXPANSION)
+# A maximal run of IP characters and/or whole expansions: the candidate token.
+_IP_EXP_TOKEN_RE = re.compile(rf"(?:{_SHELL_EXPANSION}|[0-9a-fA-FxX.])+")
+# The dotted-quad octets of _IMDS_IP, as ints, for positional comparison.
+_IMDS_OCTETS = tuple(int(o) for o in _IMDS_IP.split("."))
+#: Collapsed-expansion sentinel: a NUL never appears in a real shell command.
+_EXPANSION_SENTINEL = "\x00"
+
+
+def _imds_access_via_expansion(command: str) -> str | None:
+    """Refuse a 4-octet IMDS token one of whose octets is a shell expansion.
+
+    See the module note above. The candidate token is split into octets with each
+    whole expansion collapsed to a sentinel; an octet carrying the sentinel is
+    WILDCARDED (bash controls what it expands to) and every other octet must equal
+    IMDS at its position. A token is refused only when it carries at least one
+    expansion octet AND at least one LITERAL octet, and every literal octet equals
+    IMDS at its position: the literal octets pin the token to the IMDS prefix. A
+    token whose four octets are ALL expansions has no literal to anchor it and is
+    NOT IMDS-shaped, so it is left alone. Returns the denial reason -- naming the
+    UNEXPANDED token, never any expanded bytes -- or None.
+
+    Scope: the four-part dotted form ``169.254.169.<octet>`` carrying a ``$(`` /
+    ``${`` expansion, per GHSA-x2m8-5ff9-f479. A bare ``$VAR`` octet (no brace or
+    paren) and the 2-/3-part inet_aton short forms are outside this check.
+    """
+    if "$(" not in command and "${" not in command:
+        return None
+    for m in _IP_EXP_TOKEN_RE.finditer(command):
+        token = m.group(0)
+        if "$(" not in token and "${" not in token:
+            continue  # a pure literal IP -- the canonicalizer path above owns it
+        octets = _SHELL_EXPANSION_SUB_RE.sub(_EXPANSION_SENTINEL, token).split(".")
+        if len(octets) != 4:
+            continue
+        wildcard = False
+        literal_ok = True
+        has_literal = False
+        for part, want in zip(octets, _IMDS_OCTETS):
+            if _EXPANSION_SENTINEL in part:
+                wildcard = True  # runtime-controlled octet -> matches any value
+                continue
+            has_literal = True
+            low = part.lower()
+            try:
+                value = int(low, 16) if low.startswith("0x") else int(low)
+            except ValueError:
+                # An empty octet (``169..169.254``) or an unparseable literal:
+                # this token is not a per-octet IMDS spelling.
+                literal_ok = False
+                break
+            if value != want:
+                literal_ok = False
+                break
+        # At least one LITERAL octet must pin the token to the IMDS prefix. A
+        # token whose four octets are all expansions (``${MAJOR}.${MINOR}.${PATCH}
+        # .${BUILD}``, a calver, a dotnet ``-p:Version``) has no literal 169/254 to
+        # anchor it; wildcarding every octet would refuse any 4-part version
+        # string, so it is not IMDS-shaped and is left alone.
+        if wildcard and literal_ok and has_literal:
+            return (
+                f"Blocked: command accesses IMDS endpoint "
+                f"(169.254.169.254 via shell expansion '{token}')"
+            )
+    return None
+
 
 def _check_imds_access(command: str, *, enabled_ids: "frozenset[str] | None" = None) -> str | None:
     """Detect attempts to access the IMDS endpoint via any encoding.
@@ -1460,10 +1549,12 @@ def _check_imds_access(command: str, *, enabled_ids: "frozenset[str] | None" = N
     """
     if enabled_ids is not None and "credential-exfil-imds-any" not in enabled_ids:
         return None
-    # Quick reject: no IP-like candidate in command
+    # Quick reject: no literal IP candidate. A token whose octets are ALL shell
+    # expansions (``$A.$B.$C.254``) still has no literal candidate, so the
+    # expansion check runs even on this path rather than short-circuiting None.
     candidates = _IP_CANDIDATE_RE.findall(command)
     if not candidates:
-        return None
+        return _imds_access_via_expansion(command)
 
     try:
         imds_v6: ipaddress.IPv6Address | None = ipaddress.ip_address(_IMDS_IPV6)  # type: ignore[assignment]
@@ -1490,7 +1581,8 @@ def _check_imds_access(command: str, *, enabled_ids: "frozenset[str] | None" = N
                     )
             except ValueError:
                 pass
-    return None
+    # No literal encoding matched; a per-octet shell-expansion spelling still can.
+    return _imds_access_via_expansion(command)
 
 
 # This module is the import path of every name the egress layer offers. The URL classifier,

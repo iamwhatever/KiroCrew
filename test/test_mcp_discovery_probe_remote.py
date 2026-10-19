@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from mcp_discovery_helpers import (  # noqa: F401 -- the autouse fixture registers by import
     _passthrough_sandbox,
+    _stub_remote_probe_ssrf_vet,
 )
 from stray_line_helpers import STRAY_LINES
 
@@ -1091,3 +1092,123 @@ class TestProtocolVersionNegotiation:
 
         assert (result.status, result.error) == ("error", "boom")
         assert session.post.call_count == 1
+
+
+class TestProbeRemoteRejectsNonPublicUrls:
+    """The remote probe SSRF-vets its url before it POSTs.
+
+    ``server.url`` is attacker-reachable -- a sandboxed process can append an
+    entry to ``~/.kiro/crew/mcp.json`` -- so a url naming an internal /
+    link-local / private address must be refused and never contacted. Otherwise
+    the gateway POSTs the handshake there (reaching e.g. ``169.254.169.254``) and
+    reflects the reply onto the dashboard row. A legitimate PUBLIC remote server
+    must still connect: ``test_a_public_url_still_connects`` pins that here, and
+    every other ``TestProbeRemote`` case (all on public hostnames) stays green.
+
+    The autouse ``_stub_remote_probe_ssrf_vet`` fixture in ``mcp_discovery_helpers``
+    answers the vet's DNS seam from one public address, so a NAME is approved
+    without a real lookup while an IP LITERAL still runs the real address checks.
+    """
+
+    def setup_method(self) -> None:
+        _probe_cache.clear()
+
+    def teardown_method(self) -> None:
+        _probe_cache.clear()
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://169.254.169.254/latest/meta-data/",  # cloud metadata (link-local)
+            "http://127.0.0.1:9/mcp",  # IPv4 loopback
+            "http://10.0.0.5/mcp",  # RFC1918 private
+            "http://[::1]/mcp",  # IPv6 loopback
+            "http://0x7f000001/mcp",  # alternate loopback encoding the OS resolver accepts
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_a_non_public_literal_is_refused_without_contact(self, url: str) -> None:
+        server = McpServerInfo(name="remote", url=url)
+
+        with patch("kiro_crew.mcp_discovery.aiohttp.ClientSession") as session_cls:
+            result = await _probe_remote(server)
+
+        session_cls.assert_not_called()
+        assert result.status == "error"
+        assert result.error == "URL is not a public address"
+        # A refused probe exposes no handshake details and lists no tools.
+        assert result.sent_headers is None
+        assert result.tools == []
+
+    @pytest.mark.asyncio
+    async def test_a_name_resolving_to_a_private_address_is_refused(self, monkeypatch) -> None:
+        """DNS-rebinding guard: the vet checks EVERY resolved address, so a
+        public-looking name that answers with a private address is refused too.
+        Drives the REAL vet with its resolver pointed at a private address."""
+        from kiro_crew import link_unfurl as lu
+
+        monkeypatch.setattr(lu, "_default_resolve", lambda _h, _p: ["10.1.2.3"])
+        server = McpServerInfo(name="remote", url="https://rebind.example/mcp")
+
+        with patch("kiro_crew.mcp_discovery.aiohttp.ClientSession") as session_cls:
+            result = await _probe_remote(server)
+
+        session_cls.assert_not_called()
+        assert result.status == "error"
+        assert result.error == "URL is not a public address"
+
+    @pytest.mark.asyncio
+    async def test_the_vet_runs_before_a_secretless_server_is_contacted(self) -> None:
+        """A plain (no ``secret://`` header) server still reaches the vet: the
+        header pre-check passes, and the non-public url is refused before any
+        POST -- so the fix does not depend on the header refusal firing first."""
+        server = McpServerInfo(
+            name="remote",
+            url="http://169.254.169.254/latest/meta-data/",
+            headers={"Authorization": "Bearer plain-token"},
+        )
+
+        with patch("kiro_crew.mcp_discovery.aiohttp.ClientSession") as session_cls:
+            result = await _probe_remote(server)
+
+        session_cls.assert_not_called()
+        assert result.status == "error"
+        assert result.error == "URL is not a public address"
+
+    @pytest.mark.asyncio
+    async def test_a_public_url_still_connects(self) -> None:
+        """No regression: a public remote server is vetted, pinned, and probed OK."""
+        server = McpServerInfo(name="remote", url="https://mcp.example.com/mcp")
+
+        init_resp = MagicMock()
+        init_resp.status = 200
+        init_resp.content_type = "application/json"
+        init_resp.headers = {}
+        init_resp.json = AsyncMock(return_value={"jsonrpc": "2.0", "id": 1, "result": {}})
+        init_resp.__aenter__ = AsyncMock(return_value=init_resp)
+        init_resp.__aexit__ = AsyncMock(return_value=False)
+
+        notif_resp = MagicMock()
+        notif_resp.status = 202
+        notif_resp.__aenter__ = AsyncMock(return_value=notif_resp)
+        notif_resp.__aexit__ = AsyncMock(return_value=False)
+
+        tools_resp = MagicMock()
+        tools_resp.status = 200
+        tools_resp.content_type = "application/json"
+        tools_resp.json = AsyncMock(
+            return_value={"jsonrpc": "2.0", "id": 2, "result": {"tools": [{"name": "search"}]}}
+        )
+        tools_resp.__aenter__ = AsyncMock(return_value=tools_resp)
+        tools_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(side_effect=[init_resp, notif_resp, tools_resp])
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("kiro_crew.mcp_discovery.aiohttp.ClientSession", return_value=mock_session):
+            result = await _probe_remote(server)
+
+        assert result.status == "ok"
+        assert result.tools == ["search"]

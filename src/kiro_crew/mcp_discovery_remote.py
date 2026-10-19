@@ -1,9 +1,13 @@
 """Probing a remote (HTTP) MCP server.
 
-``_probe_remote`` sends the ``initialize`` and ``tools/list`` handshake over HTTP
-with the server's headers expanded, tells a server that needs authorization from
-one that failed, and reads the bearer challenge and the runtime grant that decide
-which.
+``_probe_remote`` SSRF-vets the configured url through
+``link_unfurl.vet_unfurl_url`` and pins the connection to the vetted address, then
+sends the ``initialize`` and ``tools/list`` handshake over HTTP with the server's
+headers expanded, tells a server that needs authorization from one that failed,
+and reads the bearer challenge and the runtime grant that decide which. The vet is
+why a server url naming an internal / link-local / private address is refused
+before the handshake instead of having the gateway POST to it and reflect the
+reply onto the dashboard row.
 
 :mod:`kiro_crew.mcp_discovery` stays the import path and the patch surface for
 every name here; that module's comment lists the owners.
@@ -257,7 +261,27 @@ async def _probe_remote(
         server.error = refusal
         _cache_probe(server)
         return server
+
+    # SSRF vet before any connection. ``server.url`` comes from the configured
+    # MCP entry, and a sandboxed process can append one to
+    # ``~/.kiro/crew/mcp.json``; without a host check a url naming a link-local /
+    # loopback / private address (169.254.169.254, 127.0.0.1, 10.0.0.0/8, ::1,
+    # ...) would have the gateway POST this handshake there and reflect the reply
+    # back onto the dashboard row. Reuse ``link_unfurl``'s vet -- the one the link
+    # preview, calendar, WeCom and OAuth-discovery fetches already share -- and
+    # dial only the address it approved, so a legitimate PUBLIC remote server
+    # still connects while an internal target is refused by that one policy.
+    # Imported function-locally for the same reason ``_expand_header_placeholders``
+    # defers its import: to keep ``link_unfurl`` off the import graph of the many
+    # consumers that never probe a remote server.
+    from kiro_crew.link_unfurl import UnfurlRejected, pinned_connector, vet_unfurl_url
+
     try:
+        # Blocking getaddrinfo, so off the event loop -- the offload the
+        # link-preview and OAuth-discovery fetches use for the same vet. The
+        # vetted result carries the approved addresses the connector is pinned to
+        # below, so there is no second lookup for a rebind to poison.
+        vetted = await asyncio.to_thread(vet_unfurl_url, server.url)
         init_body = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -282,7 +306,12 @@ async def _probe_remote(
         }
 
         timeout = aiohttp.ClientTimeout(total=_get_probe_timeout())
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        # Pin the connection to the vetted address(es): the Host header and TLS
+        # SNI still come from ``server.url`` (a public server's cert keeps
+        # verifying), but the socket can only reach what the vet approved.
+        async with aiohttp.ClientSession(
+            timeout=timeout, connector=pinned_connector(vetted)
+        ) as session:
             async with session.post(server.url, json=init_body, headers=hdrs) as resp:
                 if resp.status != 200:
                     # The CHALLENGE is recorded on both outcomes. A rejected
@@ -386,6 +415,14 @@ async def _probe_remote(
                 ]
 
         server.status = "ok"
+    except UnfurlRejected:
+        # Refused by the SSRF vet before contact. Logged by server NAME, never
+        # the url: a user-typed url can carry a credential in its userinfo or
+        # query string.
+        server.sent_headers, server.resolved_header_values = None, []
+        server.status = "error"
+        server.error = "URL is not a public address"
+        logger.warning("MCP probe refused [%s]: url is not a public address", server.name)
     except asyncio.TimeoutError:
         server.status = "error"
         server.error = "timeout"

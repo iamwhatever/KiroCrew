@@ -307,6 +307,52 @@ class TestWhatARowCarries:
         log.completed(1)
         assert log.row(1)["reply"] == "the settled answer"
 
+    def test_two_message_sent_of_one_model_call_join_into_the_reply(self) -> None:
+        """Settled rule 2a. The runner cuts the last run of a row off at a tool call or
+        approval prompt and logs it under the row's own step once the text after it
+        settles the run, so one model call's reply arrives as two `message/sent`: the
+        row's entry, then that run. The row shows the whole of it, joined in order."""
+        log = _Log()
+        log.prompt(1, "a question")
+        log.started(1)
+        log.reply(1, 1, "Let me check the ")
+        log.reply(1, 1, "config")
+        log.completed(1)
+        assert log.row(1)["reply"] == "Let me check the config"
+
+    def test_a_later_model_call_still_replaces_rather_than_joins(self) -> None:
+        """Rule 2a joins only within one step. A reply at a LATER step is the next
+        model call, so it replaces -- rule 2 (the newest call wins) is unchanged."""
+        log = _Log()
+        log.prompt(1, "a question")
+        log.started(1)
+        log.reply(1, 1, "narration before a tool")
+        log.reply(1, 1, " and the run held across it")
+        log.reply(1, 2, "the answer the next call gave")
+        log.completed(1)
+        assert log.row(1)["reply"] == "the answer the next call gave"
+
+    def test_a_given_back_run_joins_a_row_committed_with_no_text_yet(self) -> None:
+        """A segment that is all one held run commits an empty row (no `message/sent`),
+        and the run given back is the only entry for that step, so it stands alone."""
+        log = _Log()
+        log.prompt(1, "a question")
+        log.started(1)
+        log.reply(1, 1, "OK.")
+        log.completed(1)
+        assert log.row(1)["reply"] == "OK."
+
+    def test_joined_parts_are_previewed_once_so_the_space_between_survives(self) -> None:
+        """The join is on the raw text, not on two previews: previewing each part
+        collapses its own trailing whitespace, which would glue the parts together."""
+        log = _Log()
+        log.prompt(1, "a question")
+        log.started(1)
+        log.reply(1, 1, "a sentence that ends with a space ")
+        log.reply(1, 1, "and continues")
+        log.completed(1)
+        assert log.row(1)["reply"] == "a sentence that ends with a space and continues"
+
     def test_a_steered_reply_is_cut_and_never_becomes_the_settled_one(self) -> None:
         """Settled rule 1, and the half that matters: a cut reply does not CLEAR.
 

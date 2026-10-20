@@ -345,6 +345,14 @@ def _outline_start() -> dict[str, Any]:
         # only by a closer naming this ordinal, so a closer arriving out of order
         # cannot commit one turn's reply onto another turn's row.
         "draft_turn": 0,
+        # The draft's model call (step) and the raw text it was built from. One model
+        # call can write its reply in two `message/sent` entries -- the runner cuts the
+        # last run of a row off at a tool call or approval prompt and gives it back
+        # under the row's own step -- and the two are joined (rule 2a). The preview is
+        # rebuilt from the joined raw rather than from two previews, since collapsing
+        # each part alone would drop the space between them.
+        "draft_step": 0,
+        "draft_raw": "",
         # The newest seq folded, for the same guard the ``timeline`` fold states: a
         # seq restarts at 1 in the next succession unit, so a seq at or below this one
         # is the mark that a slot-wide read is folding two units into one list.
@@ -439,8 +447,32 @@ def _outline_step(state: dict[str, Any], entry: Entry) -> None:
         # line as the thing the turn settled on, which no reader can tell from a real
         # answer. Empty is the honest preview, and it is what this fold's scope says:
         # it does not read ``message/chunk``, so an overflow body has none here.
-        state["draft"] = _outline_preview(data.get("text"), OUTLINE_REPLY_CHARS)
+        #
+        # Rule 2a: two uncut ``message/sent`` of ONE model call -- same turn and same
+        # step -- are that call's reply in parts, joined in order. The runner cuts the
+        # last run of a row off at a tool call or approval prompt and logs it under the
+        # row's own step once the text after it settles the run, so the reply arrives as
+        # the row's entry and then that run. Folded into one preview, the row shows the
+        # whole reply and not only the part given back last. A LATER step is the next
+        # model call and still replaces, so rule 2 (newest call wins) is unchanged; a
+        # step of 0 or absent never joins, as no two real calls share one.
+        text = data.get("text")
+        step = data.get("step")
+        same_call = (
+            state["draft_turn"] == turn
+            and isinstance(step, int)
+            and not isinstance(step, bool)
+            and step > 0
+            and state["draft_step"] == step
+            and isinstance(text, str)
+            and bool(text)
+        )
+        state["draft_raw"] = (
+            state["draft_raw"] + text if same_call else (text if isinstance(text, str) else "")
+        )
+        state["draft"] = _outline_preview(state["draft_raw"], OUTLINE_REPLY_CHARS)
         state["draft_turn"] = turn
+        state["draft_step"] = step if isinstance(step, int) and not isinstance(step, bool) else 0
         return
 
     if entry.type == "turn/started":
@@ -461,6 +493,8 @@ def _outline_step(state: dict[str, Any], entry: Entry) -> None:
         row["reply"] = ""
         state["draft"] = ""
         state["draft_turn"] = 0
+        state["draft_step"] = 0
+        state["draft_raw"] = ""
         attempt = data.get("attempt")
         if isinstance(attempt, int) and not isinstance(attempt, bool) and attempt > 1:
             # RECORDED separately from the retraction, because which try this is and
@@ -486,6 +520,8 @@ def _outline_step(state: dict[str, Any], entry: Entry) -> None:
         row["reply"] = ""
         state["draft"] = ""
         state["draft_turn"] = 0
+        state["draft_step"] = 0
+        state["draft_raw"] = ""
         return
 
     # turn/completed -- rule 3: the draft commits here and nowhere earlier.
@@ -493,6 +529,8 @@ def _outline_step(state: dict[str, Any], entry: Entry) -> None:
         row["reply"] = state["draft"]
     state["draft"] = ""
     state["draft_turn"] = 0
+    state["draft_step"] = 0
+    state["draft_raw"] = ""
 
 
 def _outline_copy(state: dict[str, Any]) -> dict[str, Any]:

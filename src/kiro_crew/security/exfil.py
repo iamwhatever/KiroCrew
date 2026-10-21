@@ -1460,12 +1460,14 @@ _IMDS_IPV6 = "fd00:ec2::254"
 # (host-dependent output, writing the operator's real bytes into the audit
 # trail) is sound and preserved here.
 #
-# Expansions are collapsed by a BALANCED scanner (``_skip_balanced_expansion``),
-# not a regex, so a nested ``$((100+(154)))`` or ``${a${b}}`` is spanned whole:
-# a non-nested regex stops at the first inner paren and leaves that octet unseen,
-# so the token would slip through unrefused. The scan is one linear pass with a
-# depth counter: no recursion, no backtracking, no ReDoS, and a command with no
-# ``$(``/``${`` marker short-circuits before the scan runs at all.
+# Expansions are collapsed whole by matched brackets (``_match_closers`` feeding
+# ``_ip_expansion_tokens``), not a regex, so a nested ``$((100+(154)))`` or
+# ``${a${b}}`` is spanned in one piece: a non-nested regex stops at the first
+# inner paren and leaves that octet unseen, letting the token slip through. The
+# closers are precomputed in one linear pass, so the scan stays O(n) -- no
+# backtracking, no ReDoS, and an unclosed ``$(`` is a lookup miss rather than a
+# re-scan to end of string -- and a command with no ``$(``/``${`` marker
+# short-circuits before the scan runs at all.
 #
 # Literal octets are read in the OS resolver's bases (``_octet_literal_value``):
 # a leading-zero octet is OCTAL (``0251`` is 169, not 251) and ``0x`` is hex, the
@@ -1479,29 +1481,32 @@ _EXPANSION_SENTINEL = "\x00"
 _IP_TOKEN_CHARS = frozenset("0123456789abcdefABCDEFxX.")
 
 
-def _skip_balanced_expansion(command: str, i: int) -> "int | None":
-    """Index just past the balanced expansion that opens at *i*, or None.
+def _match_closers(command: str) -> "dict[int, int]":
+    """Map each ``(``/``{`` index to its matching ``)``/``}`` index; closed ones only.
 
-    ``command[i]`` is ``$`` and ``command[i + 1]`` is ``(`` or ``{``. Counts the
-    nesting of that one delimiter to ANY depth -- ``$((100+(154)))``, ``${a${b}}``
-    -- so a nested span is collapsed whole, never left half-matched. One linear
-    pass with a depth counter: no recursion, no backtracking. None if unterminated.
+    One linear pass with a stack per delimiter; an opener that never closes is
+    absent from the map. Precomputing this once is what keeps the token scan
+    linear: an unterminated ``$(`` is a lookup miss, not a re-scan to the end of
+    the string, so a command of many unclosed ``$(`` cannot drive the gate
+    quadratic and stall the event loop. Each opener is matched independently, so a
+    later opener still closes after an unclosed one -- ``$( ( $(x)`` records the
+    inner ``$(x)`` even though the outer ``$(`` never closes.
     """
-    opener = command[i + 1]
-    closer = ")" if opener == "(" else "}"
-    depth = 0
-    j = i + 1
-    n = len(command)
-    while j < n:
-        c = command[j]
-        if c == opener:
-            depth += 1
-        elif c == closer:
-            depth -= 1
-            if depth == 0:
-                return j + 1
-        j += 1
-    return None
+    closers: dict[int, int] = {}
+    parens: list[int] = []
+    braces: list[int] = []
+    for idx, ch in enumerate(command):
+        if ch == "(":
+            parens.append(idx)
+        elif ch == ")":
+            if parens:
+                closers[parens.pop()] = idx
+        elif ch == "{":
+            braces.append(idx)
+        elif ch == "}":
+            if braces:
+                closers[braces.pop()] = idx
+    return closers
 
 
 def _ip_expansion_tokens(command: str) -> "list[tuple[str, str]]":
@@ -1509,37 +1514,35 @@ def _ip_expansion_tokens(command: str) -> "list[tuple[str, str]]":
 
     A token is a run of dotted-IP characters and whole ``$(`` / ``${`` expansion
     spans. In *masked* each whole span is ONE sentinel, so an expansion holding a
-    dot (``$(printf 2.54)``) or nested parens can neither split an octet nor
-    escape the token; *original* is the unexpanded text, for the denial reason.
+    dot (``$(printf 2.54)``) or nested parens can neither split an octet nor escape
+    the token; *original* is the unexpanded text, for the denial reason. The scan
+    is linear: each expansion span is one O(1) lookup of its precomputed closer,
+    and an UNTERMINATED ``$(`` (no closer) is a plain ``$`` the scan steps past,
+    never a re-scan to the end of the string.
     """
+    closers = _match_closers(command)
     tokens: list[tuple[str, str]] = []
     i, n = 0, len(command)
     while i < n:
         c = command[i]
-        if not (c in _IP_TOKEN_CHARS or (c == "$" and i + 1 < n and command[i + 1] in "({")):
+        is_expansion = c == "$" and i + 1 < n and command[i + 1] in "({" and (i + 1) in closers
+        if not (c in _IP_TOKEN_CHARS or is_expansion):
             i += 1
             continue
         start = i
         masked: list[str] = []
         while i < n:
             c = command[i]
-            if c == "$" and i + 1 < n and command[i + 1] in "({":
-                end = _skip_balanced_expansion(command, i)
-                if end is None:
-                    break  # unterminated span: the token ends before this `$`
+            if c == "$" and i + 1 < n and command[i + 1] in "({" and (i + 1) in closers:
                 masked.append(_EXPANSION_SENTINEL)
-                i = end
+                i = closers[i + 1] + 1  # just past this whole balanced span
             elif c in _IP_TOKEN_CHARS:
                 masked.append(c)
                 i += 1
             else:
                 break
-        if i == start:
-            # A token that began at an UNTERMINATED expansion made no progress;
-            # consume the `$` as a plain character so the scan always advances
-            # (never a hang on the event loop) and emit no token for it.
-            i += 1
-            continue
+        # A token always begins at an IP char or a CLOSED expansion, so the first
+        # inner step advances past *start*: the scan cannot stall.
         tokens.append((command[start:i], "".join(masked)))
     return tokens
 

@@ -8398,6 +8398,18 @@ class TestIsSensitiveBashCommand:
             assert _check_imds_access(cmd) is None, cmd
             assert is_sensitive_bash_command(cmd) is None, cmd
 
+    def test_imds_expansion_scanner_is_linear_on_unclosed_spans(self) -> None:
+        # Many UNCLOSED `$(` must not drive the scanner quadratic. A precomputed
+        # closer map makes each one an O(1) lookup miss rather than a re-scan to
+        # the end of the string, so a command at the 20 KiB scan ceiling that is
+        # nothing but `$(` stays linear and cannot stall the event loop. The test
+        # returning at all is the guard: a quadratic scan (~1e8 steps) would hang.
+        from kiro_crew.security import _check_imds_access
+
+        cmd = "$(" * 10240  # 20,480 chars, exactly at MAX_SCANNABLE_COMMAND_CHARS
+        assert _check_imds_access(cmd) is None
+        assert is_sensitive_bash_command(cmd) is None
+
     def test_imds_literal_and_quote_only_controls_unchanged(self) -> None:
         # Controls that must keep their current verdicts: the literal IMDS IP is
         # still refused by the always-on gate, and the quote-only splits stay

@@ -81,20 +81,29 @@ _BASH_EXFIL_RES: list[tuple[re.Pattern[str], str]] = [
     # view stops before expansion, so the literal `/dev/tcp/` substring (matched
     # by the `/dev/tcp/` pattern above) is absent while bash still forms the
     # pseudo-device at run time: `/dev/tc$(printf p)/host/port`, `/dev/tc${X}p/…`,
-    # even `/dev/tcp$(printf /)…` (the trailing slash expanded). The shape is a
-    # `/dev/tc`/`/dev/ud` device NAME carrying a `$(` / `${` substitution before
-    # its next path separator; a benign `/dev/null`, `/dev/stdin` or `/dev/fd/N`
-    # never splices one into the device name, and a quote-only split
-    # (`/dev/tc"p"/`) carries no substitution so it stays the deny tier's job.
-    # Only the unexpanded command text is matched -- no expanded bytes are logged.
+    # even `/dev/tcp$(printf /)…` (the trailing slash expanded). A benign
+    # `/dev/null`, `/dev/stdin` or `/dev/fd/N` never splices one into the device
+    # name, and a quote-only split (`/dev/tc"p"/`) carries no substitution so it
+    # stays the deny tier's job. Only the unexpanded command text is matched -- no
+    # expanded bytes are logged.
     #
-    # The device path must be ABSOLUTE. bash's reverse-shell magic fires only for
-    # the literal `/dev/tcp` device, so `/dev/` is anchored with a negative
-    # lookbehind `(?<![\w.~-])`: a leading `/dev/` (start of command, or after a
-    # space or a `>`/`<` redirection) matches, but a `/dev/tc` substring inside a
-    # relative or home path -- `~/dev/tcl${V}`, `./dev/tc${x}`, `proj/dev/udp${v}`
-    # -- does not, since that is an ordinary directory, never the pseudo-device.
-    (re.compile(r"(?<![\w.~-])/dev/(?:tc|ud)[^\s/]*(?:\$\(|\$\{)"), "/dev/tcp via shell expansion"),
+    # Two anchors keep this to the real pseudo-device and off ordinary paths:
+    #   1. ABSOLUTE position. bash's magic fires only for a leading `/dev/tcp`, so
+    #      `/dev/` must BEGIN a shell word: start of command, or right after
+    #      whitespace or a `> < & | ; (` operator. A `/dev/tc` substring inside a
+    #      home, relative or drive-rooted path -- `~/dev/tcl${V}`, `./dev/tc${x}`,
+    #      `$(pwd)/dev/udp-tools${V}`, `${WORKSPACE}/dev/tcl${V}`, `C:/dev/tcl${V}`,
+    #      `build//dev/tcl$((8+1))` -- is preceded by `~ . / } ) " :` and the like,
+    #      none of which open a word, so it does not match.
+    #   2. DEVICE name. The segment after `/dev/` must be exactly `tcp`/`udp` with
+    #      the expansion forming part of it: `tc`/`ud`/`tcp`/`udp` IMMEDIATELY
+    #      followed by a `$(`/`${`. A longer literal device -- `/dev/tcl…`,
+    #      `/dev/tcpdump…`, `/dev/udemy…`, `/dev/udmabuf…` -- has a literal letter
+    #      between the prefix and any expansion, so it does not match.
+    (
+        re.compile(r"(?:^|(?<=[\s>&<|;(]))/dev/(?:tcp?|udp?)(?:\$\(|\$\{)"),
+        "/dev/tcp via shell expansion",
+    ),
 ]
 
 

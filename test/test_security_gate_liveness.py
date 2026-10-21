@@ -438,7 +438,17 @@ def _url_payload_command(n: int) -> str:
 #: device name carrying one. The ``/dev/`` path is anchored as ABSOLUTE and at least one
 #: literal IMDS octet is required, so all-expansion version strings and ``~/dev/tcl`` home
 #: paths are not over-blocked. No existing pattern, threshold or pass moved.
-_PACKAGE_LINE_BUDGET = 32_167
+#:
+#: Raised again, from 32,167, hardening that same gate against three review findings
+#: (GHSA-x2m8-5ff9-f479): literal octets are now read in the resolver's bases so an OCTAL
+#: (``0251``→169) or hex spelling of the fixed octets cannot walk the token past the gate;
+#: a BALANCED expansion scanner (``_skip_balanced_expansion``, ``_ip_expansion_tokens``)
+#: spans a nested ``$((100+(154)))`` whole instead of leaving it half-matched; and the
+#: ``/dev/`` rule now anchors to an absolute shell word AND a ``tcp``/``udp`` device
+#: segment, so a path rooted at ``}``/``)``/``"``/``:`` or a doubled slash is not
+#: over-blocked. The token scanner also advances past an UNTERMINATED ``$(`` so it
+#: cannot hang the event loop. No existing pattern, threshold or pass moved.
+_PACKAGE_LINE_BUDGET = 32_258
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

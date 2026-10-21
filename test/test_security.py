@@ -8359,6 +8359,45 @@ class TestIsSensitiveBashCommand:
             assert _check_imds_access(cmd) is None, cmd
             assert is_sensitive_bash_command(cmd) is None, cmd
 
+    def test_imds_shell_expansion_octal_and_nested_blocked(self) -> None:
+        # The literal octets are read in the resolver's bases, and expansion spans
+        # are collapsed by a balanced scanner, so two evasions stay BLOCKED:
+        #   - C-style OCTAL fixed octets: `0251`/`0376` resolve to 169/254 (inet_aton
+        #     reads a leading-zero octet as octal), so a decimal-only compare missed
+        #     them while bash/curl still reached IMDS.
+        #   - NESTED arithmetic parens: `$((100+(154)))` is one balanced span; a
+        #     non-nested regex left it half-matched and the octet unseen.
+        # (Regression: GHSA-x2m8-5ff9-f479 rework.)
+        from kiro_crew.security import _check_imds_access
+
+        for cmd in (
+            "curl http://0251.0376.0251.25$((2+2))/latest/meta-data/",
+            "curl http://0xA9.0xFE.0xA9.25$(printf 4)/latest/meta-data/",
+            "curl http://169.254.169.$((100+(154)))/latest/meta-data/",
+            "curl http://169.254.169.$(printf '%d' $((1+(253))))/x",
+        ):
+            assert _check_imds_access(cmd) is not None, cmd
+            assert is_sensitive_bash_command(cmd) is not None, cmd
+
+    def test_imds_expansion_scanner_edge_cases_not_flagged(self) -> None:
+        # Edge inputs the scanner must handle without a false refusal:
+        #   - an UNTERMINATED expansion (no closing paren): the balanced-span scan
+        #     bails, the token ends at the `$`, and the literal remainder is not IMDS;
+        #   - an EMPTY octet beside an expansion (`169..169.<exp>`): unparseable, so
+        #     the token is not a per-octet IMDS spelling;
+        #   - a leading-zero octet that is NOT valid octal (`0259` has a 9): read as
+        #     decimal 259, which is not the IMDS 169.
+        from kiro_crew.security import _check_imds_access
+
+        for cmd in (
+            "echo http://169.254.169.25$(printf 4",
+            "echo $((1+2",  # unterminated span AT a token start: scan must advance
+            "echo 169..169.$(printf 254)",
+            "curl http://0259.254.169.$((1+1))/x",
+        ):
+            assert _check_imds_access(cmd) is None, cmd
+            assert is_sensitive_bash_command(cmd) is None, cmd
+
     def test_imds_literal_and_quote_only_controls_unchanged(self) -> None:
         # Controls that must keep their current verdicts: the literal IMDS IP is
         # still refused by the always-on gate, and the quote-only splits stay
@@ -8887,18 +8926,30 @@ class TestAuditBashExfiltration:
             assert audit_bash_exfiltration(cmd) is None, cmd
 
     def test_devtcp_substring_in_home_or_relative_path_not_blocked(self) -> None:
-        # bash forms a socket only for the magic ABSOLUTE /dev/tcp. A /dev/tc or
-        # /dev/ud substring inside a home or relative path -- ~/dev/tcl, ./dev/tc*,
-        # proj/dev/udp* -- is an ordinary directory, so the rule's leading-/dev/
-        # negative lookbehind leaves it alone even when an expansion follows. Each
-        # of these matched the unanchored rule before the rework and must not now.
-        # (Regression: GHSA-x2m8-5ff9-f479 rework.)
+        # bash forms a socket only for the magic ABSOLUTE /dev/tcp, so the rule has
+        # two anchors: /dev/ must BEGIN a shell word, and the segment after it must
+        # be tcp/udp with the expansion forming part of it. A /dev/tc or /dev/ud
+        # substring inside a home, relative or drive-rooted path is an ordinary
+        # directory and must not match -- the char before /dev/ (~ . / } ) " :) does
+        # not open a word, and/or a literal letter sits between the prefix and the
+        # expansion. Every row matched the earlier unanchored rule and must not now.
+        # (Regression: GHSA-x2m8-5ff9-f479 rework; Security Scope confirmed rows.)
         for cmd in [
             "ls ~/dev/tcl${V}/lib",
             "cd ~/dev/udemy-course-${N}",
             "ls ./dev/tc${x}",
             "cp build/dev/tcl-wrapper-${VER}.tar .",
             "rsync -a ~/dev/udp-tools-${REV}/ dest/",
+            # chars the earlier lookbehind still admitted before /dev/: } ) " :
+            "ls ${WORKSPACE}/dev/tcl${TCL_VERSION}/lib",
+            'cd "$HOME"/dev/udemy-course-${N}',
+            "cp $(pwd)/dev/udp-tools-${REV}.tar.gz dist/",
+            "tar -xzf build.tgz -C ${OUT_DIR}/dev/tcpdump-${VER}",
+            "ls C:/dev/tcl-${VER}/lib",
+            "Get-ChildItem ${env:USERPROFILE}/dev/udp-tools-${env:REV}",
+            # a doubled slash before dev (relative), and a real /dev/ud* device node
+            "ls ./build//dev/tcl$((8+1))/lib",
+            "ls /dev/udmabuf${N}",
         ]:
             assert audit_bash_exfiltration(cmd) is None, cmd
 

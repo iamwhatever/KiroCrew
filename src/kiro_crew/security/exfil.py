@@ -1453,29 +1453,113 @@ _IMDS_IPV6 = "fd00:ec2::254"
 # ``169.254.169.25$(printf 4)`` -- reaches this gate with that octet UNEXPANDED,
 # and the literal ``169.254.169.254`` the canonicalizer looks for never appears.
 # bash still produces the real bytes at run time. Treat an expansion standing in
-# an octet slot as a WILDCARD for that octet: when every other octet equals IMDS
-# in its position, the token can expand to ``169.254.169.254`` at run time, so
-# refuse it. Only the UNEXPANDED token is examined and logged -- the deny view's
-# reason for stopping before expansion (host-dependent output, writing the
-# operator's real bytes into the audit trail) is sound and preserved here.
+# an octet slot as a WILDCARD for that octet: when every LITERAL octet equals
+# IMDS in its position (and at least one octet is literal), the token can expand
+# to ``169.254.169.254`` at run time, so refuse it. Only the UNEXPANDED token is
+# examined and logged -- the deny view's reason for stopping before expansion
+# (host-dependent output, writing the operator's real bytes into the audit
+# trail) is sound and preserved here.
 #
-# Linear by construction (no ReDoS): the scanner is ONE character class OR a
-# whole expansion -- two DISJOINT alternatives, since an expansion always opens
-# with ``$`` and the class never contains ``$`` -- so each step advances by one
-# token with no ambiguous ``\d+``/``\d+`` overlap and no ``\d+\.`` run to
-# backtrack over. Each expansion body is a bounded, non-nested character class.
-# Splitting and the per-octet compare are plain Python, and a command with no
-# expansion marker short-circuits before the scan runs at all.
-_SHELL_EXPANSION = r"\$\(\([^()]*\)\)|\$\([^()]*\)|\$\{[^{}]*\}"
-# Collapse each WHOLE expansion to one sentinel, so an expansion that itself
-# contains a dot (``$(printf 2.54)``) cannot split one octet into two.
-_SHELL_EXPANSION_SUB_RE = re.compile(_SHELL_EXPANSION)
-# A maximal run of IP characters and/or whole expansions: the candidate token.
-_IP_EXP_TOKEN_RE = re.compile(rf"(?:{_SHELL_EXPANSION}|[0-9a-fA-FxX.])+")
+# Expansions are collapsed by a BALANCED scanner (``_skip_balanced_expansion``),
+# not a regex, so a nested ``$((100+(154)))`` or ``${a${b}}`` is spanned whole
+# rather than half-matched -- a half-matched arithmetic span used to leave the
+# octet unseen and the token unrefused. The scan is one linear pass with a depth
+# counter: no recursion, no backtracking, no ReDoS, and a command with no
+# ``$(``/``${`` marker short-circuits before the scan runs at all.
+#
+# Literal octets are read in the OS resolver's bases (``_octet_literal_value``):
+# a leading-zero octet is OCTAL (``0251`` is 169, not 251) and ``0x`` is hex, the
+# same forms ``canonicalize_ip`` and ``curl`` accept, so an octal/hex spelling of
+# the fixed octets cannot walk the token past this gate.
 # The dotted-quad octets of _IMDS_IP, as ints, for positional comparison.
 _IMDS_OCTETS = tuple(int(o) for o in _IMDS_IP.split("."))
 #: Collapsed-expansion sentinel: a NUL never appears in a real shell command.
 _EXPANSION_SENTINEL = "\x00"
+#: Characters of a dotted IP token (decimal, hex digits, ``x``, the dot); never ``$``.
+_IP_TOKEN_CHARS = frozenset("0123456789abcdefABCDEFxX.")
+
+
+def _skip_balanced_expansion(command: str, i: int) -> "int | None":
+    """Index just past the balanced expansion that opens at *i*, or None.
+
+    ``command[i]`` is ``$`` and ``command[i + 1]`` is ``(`` or ``{``. Counts the
+    nesting of that one delimiter to ANY depth -- ``$((100+(154)))``, ``${a${b}}``
+    -- so a nested span is collapsed whole, never left half-matched. One linear
+    pass with a depth counter: no recursion, no backtracking. None if unterminated.
+    """
+    opener = command[i + 1]
+    closer = ")" if opener == "(" else "}"
+    depth = 0
+    j = i + 1
+    n = len(command)
+    while j < n:
+        c = command[j]
+        if c == opener:
+            depth += 1
+        elif c == closer:
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    return None
+
+
+def _ip_expansion_tokens(command: str) -> "list[tuple[str, str]]":
+    """Maximal ``(original, masked)`` tokens of IP characters and whole expansions.
+
+    A token is a run of dotted-IP characters and whole ``$(`` / ``${`` expansion
+    spans. In *masked* each whole span is ONE sentinel, so an expansion holding a
+    dot (``$(printf 2.54)``) or nested parens can neither split an octet nor
+    escape the token; *original* is the unexpanded text, for the denial reason.
+    """
+    tokens: list[tuple[str, str]] = []
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if not (c in _IP_TOKEN_CHARS or (c == "$" and i + 1 < n and command[i + 1] in "({")):
+            i += 1
+            continue
+        start = i
+        masked: list[str] = []
+        while i < n:
+            c = command[i]
+            if c == "$" and i + 1 < n and command[i + 1] in "({":
+                end = _skip_balanced_expansion(command, i)
+                if end is None:
+                    break  # unterminated span: the token ends before this `$`
+                masked.append(_EXPANSION_SENTINEL)
+                i = end
+            elif c in _IP_TOKEN_CHARS:
+                masked.append(c)
+                i += 1
+            else:
+                break
+        if i == start:
+            # A token that began at an UNTERMINATED expansion made no progress;
+            # consume the `$` as a plain character so the scan always advances
+            # (never a hang on the event loop) and emit no token for it.
+            i += 1
+            continue
+        tokens.append((command[start:i], "".join(masked)))
+    return tokens
+
+
+def _octet_literal_value(part: str) -> int:
+    """Value of a LITERAL dotted octet in the OS resolver's bases.
+
+    ``inet_aton`` and ``curl`` read a leading-zero octet as OCTAL (``0251`` is
+    169, not 251) and ``0x`` as hex, so compare in those bases -- mirrors the
+    octet parsing in ``canonicalize_ip``. Raises ValueError for an empty or
+    non-numeric octet.
+    """
+    low = part.lower()
+    if len(low) > 1 and low[0] == "0" and low[1:].isdigit():
+        # Octal only when every trailing digit is octal; a stray 8/9 is decimal,
+        # exactly as canonicalize_ip / inet_aton read it.
+        if all(c in "01234567" for c in low[1:]):
+            return int(low, 8)
+        return int(low)
+    return int(low, 0)  # decimal, or 0x-prefixed hex
 
 
 def _imds_access_via_expansion(command: str) -> str | None:
@@ -1497,11 +1581,10 @@ def _imds_access_via_expansion(command: str) -> str | None:
     """
     if "$(" not in command and "${" not in command:
         return None
-    for m in _IP_EXP_TOKEN_RE.finditer(command):
-        token = m.group(0)
-        if "$(" not in token and "${" not in token:
+    for original, masked in _ip_expansion_tokens(command):
+        if _EXPANSION_SENTINEL not in masked:
             continue  # a pure literal IP -- the canonicalizer path above owns it
-        octets = _SHELL_EXPANSION_SUB_RE.sub(_EXPANSION_SENTINEL, token).split(".")
+        octets = masked.split(".")
         if len(octets) != 4:
             continue
         wildcard = False
@@ -1512,9 +1595,8 @@ def _imds_access_via_expansion(command: str) -> str | None:
                 wildcard = True  # runtime-controlled octet -> matches any value
                 continue
             has_literal = True
-            low = part.lower()
             try:
-                value = int(low, 16) if low.startswith("0x") else int(low)
+                value = _octet_literal_value(part)
             except ValueError:
                 # An empty octet (``169..169.254``) or an unparseable literal:
                 # this token is not a per-octet IMDS spelling.
@@ -1531,7 +1613,7 @@ def _imds_access_via_expansion(command: str) -> str | None:
         if wildcard and literal_ok and has_literal:
             return (
                 f"Blocked: command accesses IMDS endpoint "
-                f"(169.254.169.254 via shell expansion '{token}')"
+                f"(169.254.169.254 via shell expansion '{original}')"
             )
     return None
 

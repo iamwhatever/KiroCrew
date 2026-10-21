@@ -1461,10 +1461,10 @@ _IMDS_IPV6 = "fd00:ec2::254"
 # trail) is sound and preserved here.
 #
 # Expansions are collapsed by a BALANCED scanner (``_skip_balanced_expansion``),
-# not a regex, so a nested ``$((100+(154)))`` or ``${a${b}}`` is spanned whole
-# rather than half-matched -- a half-matched arithmetic span used to leave the
-# octet unseen and the token unrefused. The scan is one linear pass with a depth
-# counter: no recursion, no backtracking, no ReDoS, and a command with no
+# not a regex, so a nested ``$((100+(154)))`` or ``${a${b}}`` is spanned whole:
+# a non-nested regex stops at the first inner paren and leaves that octet unseen,
+# so the token would slip through unrefused. The scan is one linear pass with a
+# depth counter: no recursion, no backtracking, no ReDoS, and a command with no
 # ``$(``/``${`` marker short-circuits before the scan runs at all.
 #
 # Literal octets are read in the OS resolver's bases (``_octet_literal_value``):

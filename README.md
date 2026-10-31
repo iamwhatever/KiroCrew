@@ -1,1050 +1,489 @@
-<p align="center">
-  <img src="assets/banner.svg" alt="Kiro Crew. Keep work moving. Runs on your hardware, remembers across sessions, keeps working unattended.">
-</p>
+# Kiro BYO
 
-<h1 align="center">Kiro Crew</h1>
+## 关于本仓库
 
-<p align="center">
-  <strong>A persistent workspace for development work that self-improves and continues beyond one session.</strong>
-</p>
+这是 **Kiro BYO 的源码仓库**，当前版本 **0.3.0**。Kiro BYO 是 KiroCrew 的第三方模型后端（App），**非 KiroCrew 官方项目**，也不随 KiroCrew 官方分发。
 
-<p align="center">
-  <a href="https://trendshift.io/repositories/103032" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/103032/daily?language=Python" alt="Kiro Crew on Trendshift" width="250" height="55"></a>
-</p>
+- **想安装使用**：请获取打包好的 release 压缩包（含安装包 `.whl` 与校验码），不要直接拿本仓库源码安装。本仓库只放源码。
+- **兼容性**：0.3.0 对应 KiroCrew **0.11.0-rc.1**。版本不符时集成器会拒绝写入，以保护现有数据。
+- **新手教程**：[中文教程.md](中文教程.md)（从安装到聊天，全流程）。
 
-<p align="center">
-  Kiro Crew is an open source development workspace that runs locally or remotely on
-  your hardware. It is persistent, self-learning, and self-evolving. Work with it
-  from the desktop app, web dashboard, and CLI, or continue the same work through
-  connection tools like Slack and Discord.
-  Your multi-step tasks can run unattended, recurring jobs run on your schedule,
-  and heartbeats monitor systems until something needs attention. Kiro Crew Apps
-  tailor that experience to a specific job, combining a purpose-built interface
-  with agents, skills, schedules, integrations, and backend services.
-</p>
+- **中文文档**：[WINDOWS_QUICKSTART.md](WINDOWS_QUICKSTART.md)（安装与升级）、[安装说明.txt](安装说明.txt)（本次热修复步骤）、[修复技术报告.md](修复技术报告.md)（修复原理）、[CHANGELOG.md](CHANGELOG.md)（版本历史）。
+- **英文文档**：下方 README 正文、[QUICKSTART.md](QUICKSTART.md)、[RELEASE_NOTES_0.2.5.md](RELEASE_NOTES_0.2.5.md)。
 
-<p align="center">
-  <a href="https://github.com/kirodotdev/KiroCrew/releases"><img src="https://img.shields.io/badge/Download-macOS%20%7C%20Linux%20%7C%20Windows-2f6feb?style=flat-square" alt="Download Kiro Crew for macOS, Linux, or Windows"></a>
-  <a href="docs/README.md"><img src="https://img.shields.io/badge/Documentation-1f6feb?style=flat-square" alt="Read the documentation"></a>
-  <a href="docs/guides/install.md"><img src="https://img.shields.io/badge/Install%20guide-macOS%20%7C%20Linux%20%7C%20Windows-6e7781?style=flat-square" alt="Install guide for macOS, Linux, and Windows"></a>
-  <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/Contributing-238636?style=flat-square" alt="Contributing guide"></a>
-  <a href="SECURITY.md"><img src="https://img.shields.io/badge/Security-8250df?style=flat-square" alt="Security policy"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-656d76?style=flat-square" alt="Apache 2.0 license"></a>
-</p>
+### 仓库结构
 
-<p align="center">
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#build-from-source">Build from source</a> ·
-  <a href="#why-kiro-crew">Why Kiro Crew</a> ·
-  <a href="#what-kiro-crew-does">Capabilities</a> ·
-  <a href="#how-it-works">How it works</a> ·
-  <a href="#security-and-control">Security</a> ·
-  <a href="#install-configure-and-operate">Install</a> ·
-  <a href="#anonymous-usage-telemetry">Telemetry</a> ·
-  <a href="#docs-and-contributing">Docs</a>
-</p>
-
-## Quick start
-
-You choose how to run Kiro Crew: the desktop app with automatic updates, a
-one-line install on your machine or a remote host, the Docker image for
-always-on servers, or a build from source. The default agent runs on
-`kiro-cli`, which you install and sign in to separately. First launch checks
-that prerequisite and links to the official setup guide when it is missing.
-
-### App downloads
-
-Use the Stable desktop package for [macOS](https://download.crew.kiro.dev/desktop/stable/latest/KiroCrew.dmg)
-or [Windows x64](https://download.crew.kiro.dev/desktop/stable/latest/KiroCrew-Setup.exe).
-On Linux, start with the one-line install below. The
-[install guide](docs/guides/install.md#install-paths) owns Insider and Nightly
-links, Linux `.deb` / `.rpm` / AppImage packages, architecture support, platform
-requirements, and sandbox setup.
-
-### Release channels
-
-Stable is the default; Insider follows release candidates, and Nightly follows
-`main`. The [release runbook](docs/build/release.md#the-three-channels) owns the
-current triggers, version shapes, promotion behavior, cadence, and update-lane
-semantics.
-
-### One-line install
-
-Install the signed Stable wheel without cloning the repository or building the
-frontend:
-
-```bash
-curl -fsSL https://download.crew.kiro.dev/cli.sh | sh
-```
-
-Then open `http://localhost:5476`. Pass `--version` to pin an exact release —
-the minimum pinnable release is `0.1.2`, because `0.1.0` and `0.1.1` predate
-manifest signing and have no signed manifest to resolve:
-
-```bash
-curl -fsSL https://download.crew.kiro.dev/cli.sh | sh -s -- --version 0.6.0
-```
-
-The [install guide](docs/guides/install.md#a-one-line-install-fastest) owns
-channel selection, managed versus system Python, mirrors, first-run setup,
-upgrades, and recovery.
-
-### Docker
-
-For always-on servers, the Gateway ships as a public multi-arch image on GHCR:
-
-```bash
-docker run -d --name kirocrew \
-  -p 127.0.0.1:5476:5476 \
-  -v kirocrew-home:/home/kirocrew \
-  ghcr.io/kirodotdev/kirocrew:stable
-```
-
-See the [Docker guide](docs/guides/docker.md) for first-run login, channel tags, and
-the container security model.
-
-### Build from source
-
-macOS and Linux require Python 3.12+, Node.js 22+ (24 LTS recommended), and
-npm. The default ACP backend also requires
-[`kiro-cli`](https://kiro.dev/docs/cli/): install it on the Gateway host and run
-`kiro-cli login` before using that backend. Other verified ACP harnesses have
-their own prerequisites in the [install guide](docs/guides/install.md). Windows
-is supported through a native source install; follow the
-[Windows guide](docs/guides/windows-install.md) instead of the shell steps below.
-
-```bash
-# 1. Clone and build Kiro Crew
-git clone https://github.com/kirodotdev/KiroCrew.git
-cd KiroCrew
-make build
-source .venv/bin/activate
-
-# 2. Configure, verify, and start
-kirocrew setup
-kirocrew doctor
-kirocrew gateway
-```
-
-## Why Kiro Crew
-
-Most agent sessions end when the chat closes. Kiro Crew runs continuously on
-hardware you control and keeps working between conversations.
-
-**Persistent.** Sessions, memory, schedules, and task checkpoints survive
-Gateway restarts, and scheduled or reactive work continues without someone at
-the terminal.
-
-**Self-learning.** Corrections and task failures become durable lessons.
-Preferences and project context carry into new sessions.
-
-**Self-evolving.** Repeated patterns become reusable skills. Memory, lessons,
-and skills stay visible and editable, so each Kiro Crew grows more tailored to
-the person and work around it.
-
-**Runs where you choose.** Your Mac, a local container, or a remote machine
-you control.
-
-**One Gateway, many surfaces.** Work directly in the desktop app or web dashboard,
-or continue the same work from the CLI and messaging surfaces like Slack and
-Discord.
-
-## What Kiro Crew does
-
-| Capability | What it gives you |
+| 目录 | 内容 |
 |---|---|
-| **Persistent sessions** | Run concurrent, isolated conversations, resume them after Gateway restarts, search prior sessions, and carry recent context into new work. |
-| **Self-learning** | Turn corrections and task failures into durable lessons that change later behavior. Lessons can apply globally or carry a `repo_scope` that limits them to one repository; Crew Members keep private lessons in their own memory store. |
-| **Self-evolving skills** | Synthesize reusable skills from repeated patterns, then inspect, refine, or remove them as your work changes. |
-| **Long-running tasks** | Give Kiro Crew a task spec and walk away. It plans steps, executes them, validates results, retries failures, and resumes from checkpoints. *"Implement this migration plan and stop if the tests fail"* runs as a checkpointed task with validation at each step. |
-| **Unattended autonomy** | Run scheduled agent work or deterministic scripts and commands without a model call. Monitor work until it is done, or react to messaging events and authenticated webhooks without someone at the terminal. *"Every weekday at 9, summarize the open work I should review"* becomes a timezone-aware recurring job delivered to the surface you choose. |
-| **Delegation** | Spawn isolated subagents for parallel work and bring their results back into the parent conversation. *"Research these three options in parallel and recommend one"* fans out to isolated subagents and synthesizes the tradeoffs. |
-| **Work where you choose** | Work directly in the desktop app or web dashboard, or continue through the CLI and any connected messaging surface without moving the agent runtime or its state. |
-| **Installable Apps** | Add focused interfaces and domain workflows through dashboard pages, scoped Gateway APIs, events, and lifecycle hooks. |
-| **Extensible tools** | Add MCP servers, markdown skills, and hooks without changing the core runtime. |
-| **Visible execution** | Watch tool calls, subagent progress, context usage, approvals, schedules, memory, and logs from the dashboard. |
-| **Defense in depth** | Combine tool approvals, OS sandboxing, sensitive-path checks, credential redaction, deny rules, audit events, and governance profiles. |
+| `src/kiro_byo/` | 主程序源码 |
+| `backend/`、`ui/` | KiroCrew App 外壳（后端路由与界面） |
+| `config/` | 配置样例（`*.example.json`）；真实配置与模型密钥不入库 |
+| `integration/` | 对各版 KiroCrew 的集成适配 |
+| `scripts/`、`tests/` | 构建/校验脚本与测试 |
+| 各类 `*.md` 报告 | 开发过程的审计与阶段报告 |
 
-You can also paste a screenshot and ask what is causing an error. Kiro Crew sends
-the image to the active Kiro model and keeps the diagnosis in the conversation
-history.
+安装包、release 副本、SHA256 校验码属于打包产物，**不放在本仓库**。
 
-The complete inventory is in [Features](src/kiro_crew/docs/index.md) and
-[What's New](CHANGELOG.md).
+This repository is the **source code of Kiro BYO**, an unofficial third-party model backend for KiroCrew. It is not affiliated with the KiroCrew project. For installation use the packaged release, not this raw source tree. See [WINDOWS_QUICKSTART.md](WINDOWS_QUICKSTART.md) for the Chinese guide.
 
-## How it works
+---
 
-```mermaid
-flowchart TD
-    S["Desktop app · Web dashboard · CLI · Messaging channels"]
-    G["Gateway<br/>access · sessions · memory · schedules · approvals · apps"]
-    A["Agent sessions<br/>ACP runtime · selected harness · MCP tools · models"]
-    S --> G --> A
+
+**Provider-neutral ACP Harness for KiroCrew**
+
+Kiro BYO is a provider-neutral ACP Harness for KiroCrew. It runs as an alternative
+Agent Backend alongside the official Kiro CLI and lets users bring their own model
+providers without making Kiro BYO a child of Kiro CLI or a KAS wrapper.
+
+Kiro BYO is a parallel ACP harness for KiroCrew. KiroCrew remains authoritative for
+session orchestration, backend-card capabilities, Crewmate governance, Side Chat,
+hooks and permission UI. Kiro BYO owns provider transport, the agent/tool loop,
+native host tools, MCP bridging, session persistence and provider telemetry.
+
+Current release: **0.3.0**. Prior: bounded, session-local `update_plan` with 20 steps and read-only Crew MCP refusal diagnostics. The Plan tool is not a Crew schedule/task database and is not durable. See `RELEASE_NOTES_0.3.0.md`.
+
+Current compatibility: This is a **Crew 0.11.0-rc.1 compatibility candidate**, not a source-verified stable integration. The adapter is pinned to that exact prerelease and refuses unknown source seams without writing. Crew 0.10 support is retired. When the main backend is BYO, new member sessions are routed to BYO and conflicting explicit official member overrides are refused; saved Crew member preferences remain untouched when switching back. This is a source-level route guard, not Windows Mate 2.0 end-to-end certification (notably per-Mate Conductor/Worker paths and already-open sessions). Existing Tiga / Dyna policies and BYO runtime semantics are retained. Static source-contract checks do not constitute a real Windows end-to-end acceptance test.
+
+0.2.0 is the first **productized Agent Harness UI** release on top of the Tiga Adaptive Routing / Unified Agent Runtime line. It keeps the bounded internal execution runtime, durable Run recovery and canonical session-event model, while replacing the debug-oriented management surface with a compact one-screen workbench: **Overview / Providers / Models / Modes / Accounts / Records / Settings**. Modes explains the selected Policy Pack and shows real recent routing/model-use evidence; Records presents requests, token/cache usage, route decisions and recovery in user-readable form, with raw runtime events available only as drill-down evidence. KiroCrew integration and ACP conformance live under Settings. Removed Tasks, standalone Integration, external-agent management and workspace-management pages are not part of the normal 0.2.0 product surface. Every Type still compiles into the same provider-neutral execution seam, Policy Pack schema v4 remains the authority for orchestration constraints, and Selection Truth records whether a session is actually on a Type or a concrete-model pin. Background scheduling remains owned by KiroCrew; BYO owns provider execution, durable recovery and its ACP/runtime boundary.
+
+The adaptive model-ranking layer remains deterministic and evidence-bounded. Recent TTFT/turn latency changes the effective Speed signal, while recent success/error outcomes and same-task history add a bounded Reliability signal; Quality and Economy remain curated/provider catalogue priors. Hard capability gates run before scoring, schema-v1/v2/v3 custom Policy Packs remain compatible, and no Router LLM, random exploration, or user-editable routing weights are introduced. The Modes page is read-only observability: it renders Policy-Pack-owned Type behavior, the most recent real task-shape signals, and the selected Type's actual model usage over the latest 60 hours. Unknown evidence is rendered as unknown rather than filled with guessed values.
+
+0.1.6 introduced the **Reasoning Language Policy**. User-visible Thinking/reasoning presentation can follow the user's current conversational language instead of each Provider's default language. `Auto` uses the current user message plus recent user turns and is independent of the KiroCrew UI locale. Technical terms and identifiers remain in their natural/original spelling when that is clearer (for example ACP, LLM, Token, API, Provider, Router, model names, `configOptions`, paths and commands). This remains a generation-time presentation hint for reasoning text/summaries an upstream already exposes; it does not request or expose hidden/private chain-of-thought, add a post-hoc translation pass, change Thinking/effort routing, or override an explicit final-answer-language request.
+
+0.1.5 is the **Type-owned reasoning policy** release. Tiga Types no longer expose a session-wide reasoning-effort slider: Sky/Multi/Power/Glitter choose effort only after routing to a concrete model, using that model's actual advertised vocabulary, and models with no adjustable effort remain fully eligible. Switching from a concrete model back to a Type clears any stale manual effort lock. Concrete-model sessions still expose their real effort selector. Deep-thinking Auto/On/Off remains a separate per-model hard boundary: user On/Off wins, fixed-on models stay on, unsupported/unknown models are never forced, and Type Auto suggestions apply only when the concrete model can express them.
+
+
+0.1.4 is the **Reasoning Surface** release. Reasoning effort is an ACP session control owned by KiroCrew's conversation UI, while the model-specific deep-thinking Auto/On/Off preference remains in the Kiro BYO Models page. Official-endpoint capability enrichment recognizes DeepSeek V4.1 Flash aliases and can fill verified capability facts from an official display name when a catalogue uses a different stable wire id. Hotfix 2 keeps the boundary strict: Kiro BYO advertises a live `effortLevel` config option only when the selected concrete model has verified selectable levels, and KiroCrew's own live session/config-option surface is the sole owner of whether the native effort selector is shown. Binary thinking toggles and unknown/new models therefore do not inherit low/high/max, while valid DeepSeek-style low/high/max controls are not hidden by a second browser-side guard. Type-to-concrete model switches push fresh config options immediately and clear incompatible stale effort locks; Kiro BYO never exports its deep-thinking toggle as a Crew config option. Hotfix 2 also makes the BYO conversation footer measure the full visible turn, including pre-dispatch setup, instead of only the provider-stream slice. Capability authority remains local override > explicit live provider facts > verified official profile > cache/name inference, so a future vendor/model is not guessed from its brand or model id.
+
+
+0.1.3 is the **Core Refinement** release. The live Agent loop now advances through explicit provider-neutral Turn phases, provider rounds/tool batches/interruption handling sit behind narrow capability seams, and durable session state is projected from typed events instead of accumulating parallel mutable truths. Policy Pack v2 separates user-facing Type semantics from machine execution policy: the assistant can still explain Sky/Multi/Power/Glitter when asked, while the Turn Engine consumes only a compiled `ExecutionIntent`. Routing metadata now keeps field-level source/confidence so local overrides, live discovery, curated facts, cache and last-resort name inference have explicit authority. The model/provider intelligence added in earlier 0.1.x releases remains intact. Exact installed-package acceptance should still run the verifier/install/runtime/repair/rollback sequence after a KiroCrew update.
+
+## Install / update
+
+Install the folder or zip containing `app.json` as the **Kiro BYO** KiroCrew App.
+Then open:
+
+```text
+Kiro BYO -> Settings -> KiroCrew -> Install / Update integration
 ```
 
-The Gateway separates where the agent runs from where you work. Each
-conversation or background task is a logical agent session driven through the
-selected `agent.acp_backend`; depending on that harness and workload, the
-session uses a dedicated process or a handle on a shared ACP runtime. State,
-policy, approvals, schedules, memory, and apps remain on the Gateway host.
+Completely restart KiroCrew after the integration succeeds. Then select:
 
-See the [architecture overview](docs/architecture/overview.md) for component
-boundaries, [sessions](docs/system-specs/modules/session.md) for lifecycle and
-isolation, and [MCP architecture](docs/architecture/mcp.md) for tool exposure.
-
-## Security and control
-
-Kiro Crew enforces approvals, OS isolation where available, sensitive-path and
-credential guards, denied-operation rules, audit records, and an optional
-policy/profile ceiling at the runtime boundary. The dashboard binds to loopback
-by default; any remote exposure requires authenticated configuration.
-
-Read the canonical [security model](docs/system-specs/modules/security.md) and
-[security architecture](docs/architecture/security-deep-dive.md) before changing
-or widening those controls. Protect credentials, review high-impact actions, and
-use [SECURITY.md](SECURITY.md) for private vulnerability reporting.
-
-## Install, configure, and operate
-
-The [install guide](docs/guides/install.md) owns every install path, first-run
-step, optional dependency, upgrade, uninstall, and recovery procedure. User data
-lives under `~/.kiro/crew` by default and moves with `KIROCREW_HOME`; configuration
-keys and precedence are canonical in the
-[config spec](docs/system-specs/modules/config.md).
-
-For a new source or wheel install:
-
-```bash
-kirocrew setup
-kirocrew doctor
-kirocrew gateway
+```text
+Settings -> Agent Harness -> Kiro BYO
 ```
 
-Run the Gateway as a boot-persistent service when needed:
+Create a **new** chat/session after switching harness. Existing sessions retain
+the backend they were created with.
 
-```bash
-kirocrew service install
-kirocrew service status
-kirocrew logs
+There is no supported source-overlay installer in 0.2.2. Integration is owned by the App,
+uses the semantic Crew 0.10 adapter, and locates the active KiroCrew Python
+package instead of assuming a Windows/macOS/Linux installation path. The App manifest
+truthfully declares macOS, Linux and Windows; provider secrets use Windows Credential
+Manager, macOS Keychain or Linux Secret Service respectively.
+
+### Unified Agent Runtime and Subagents
+
+Tiga Types compile to the same provider-neutral `ExecutionPlan`; the Turn Engine does not branch on Sky/Multi/Power/Glitter names. Broad, parallelisable, low-write turns may admit isolated read-only child agents within the Type's declared budget. Multi routes those children through its fast worker pool, Power through its strong pool, and Glitter through its fast gathering pool while the strong Leader retains all write/final-answer authority. Sky remains single-agent by default.
+
+Each child has a stable in-process `task_id`, its own transcript snapshot, sticky concrete model, cancellation token and structured result. Only the structured hand-back is merged into the parent conversation, so child search/tool chatter does not inflate the Leader transcript. Built-in foreground planning remains intentionally bounded; shared read-only native-tool execution is serialised while model inference can run in parallel. Third-party/MCP authority is still not inherited by ordinary child agents. A writer child is a separate trust mode: it receives a private Git worktree and a private NativeToolRuntime rooted in that worktree, so multiple candidate writers can run without concurrently mutating the parent checkout.
+
+The private control-plane methods `_kiro/agent/list`, `_kiro/agent/send`, `_kiro/agent/cancel` and `_kiro/agent/resume` remain internal runtime/control-plane contracts rather than normal management-UI concepts. Continuation preserves child context and the pinned model while the BYO process/session runtime remains alive; after a process restart stale child projections are marked paused instead of being falsely resumed.
+
+### Agent Team, isolated writers and ACP workers
+
+An `AgentTeam` is a bounded coordination layer over the existing `AgentTask` runtime rather than a second execution engine. It owns a Leader id, member roster, shared task board, limited team messages and explicit `max_agents` / `max_parallel` / `max_depth` budgets. `_kiro/team/spawn` may add a read-only worker/specialist or an isolated writer between parent turns; `_kiro/team/send`, `_kiro/team/board` and `_kiro/team/recycle` coordinate and reclaim terminal members. Nested spawn is bounded and the built-in Tiga policies do not recursively create unbounded swarms.
+
+Writer workspaces are fail-closed Git worktrees. `_kiro/workspace/compare` exposes independent candidate diffs/check results and `_kiro/workspace/apply` applies one explicitly selected candidate only when the parent repository is clean and `git apply --check` succeeds. There is no automatic conflict resolution, implicit merge or implicit commit. Workspace metadata is runtime state under `data/agent_workspaces` and is excluded from release/source archives.
+
+External ACP Agents can be registered locally in `config/acp_agents.json` (see `config/acp_agents.example.json`) and selected as a child backend. They run through the same `AgentTask` / `AgentResult` projection as raw-model children. The current boundary is intentionally conservative: external ACP Agents are read-only, permission requests are denied by default, and an external ACP backend cannot be promoted to a writer merely by changing a role field. This makes “Agent as Worker” available without silently transferring the parent's filesystem/tool authority.
+
+### ACP host compatibility and conformance
+
+Generic ACP-v1 semantics and KiroCrew host metadata are separated by `AcpHostAdapter` / `KiroCrewHostAdapter`. Generic clients do not inherit KiroCrew `_meta.kiro` model/effort/thinking semantics, while KiroCrew retains its explicit adapter. `scripts/acp_conformance.py` provides a process-level initialize/session smoke harness and `src/kiro_byo/acp_conformance.py` publishes the standard-v1 and Kiro-extension method surfaces. Named generic/KiroCrew/Zed/JetBrains/Qwen Code profiles are protocol-level profiles only; they are **not** a claim that every proprietary client/version was physically certified in this build environment. Real-client acceptance should still run the harness against the exact installed client/host version.
+
+### Durable Run / Checkpoint foundation
+
+Every real provider-backed prompt now creates a durable `Run` containing one restartable `Step` and a concrete `Attempt`. The runtime checkpoints the turn-ready boundary, completed Subagent groups, tool batches and terminal outcome. A checkpoint stores control-plane metadata, Agent identities and a pointer to the canonical session-event sequence; it does **not** duplicate the user/assistant transcript, tool payloads or credentials.
+
+If the process disappears while a Run is still non-terminal, the next `session/load` or `session/resume` classifies its recovery state from the persisted checkpoints. Clean/read-only interruptions can now be explicitly recovered through `_kiro/run/retry`, `_kiro/run/resume` or `_kiro/run/replan`. Recovery reconstructs the original prompt from the canonical persisted `user/message` event, rewinds the active transcript to the Run's saved `history_start`, closes any orphaned Step/Attempt as `interrupted`, and starts a fresh recovery Step/Attempt on the **same Run id**. Type-owned `replan` also clears the old sticky route pin so Tiga performs a fresh route; concrete-model selections remain pinned and therefore use retry/resume rather than pretending to replan.
+
+Potentially mutating tool batches are checkpointed **before** execution. If the process disappears after that admission boundary without a trustworthy terminal result, restart classification becomes `unknown_side_effect` and replay is rejected until the real-world side effect is verified. This makes durable recovery fail-closed instead of blindly repeating writes. `_kiro/run/list` and `_kiro/run/get` expose the ledger and recovery eligibility, while `_meta.kiro.durableRecovery` exposes safe recoverable Run ids to the host without leaking prompt/transcript content. BYO still does not implement its own cron/webhook/background scheduler; KiroCrew remains responsible for deciding when a long task runs, while BYO is responsible for preserving and safely recovering the execution state.
+
+### Tiga adaptive routing
+
+Open **Kiro BYO -> Modes** to inspect the four Tiga Types. The router remains deterministic and provider-neutral: capability/context/tool gates run first, Policy Pack goals define the Type character, and recent runtime evidence only nudges eligible-model ranking. Runtime evidence is recency-weighted and bounded; low-sample models keep most of their static prior. The page shows Policy-Pack execution characteristics, real recent task-shape evidence and the selected Type's latest 60-hour model-use distribution, while intentionally offering no sliders or weight mutation API.
+
+The adaptive layer currently learns recent latency and reliability by coarse task profile (`Code`, `Vision`, `Tool`, `Long Context`, `Research`, `Casual`). It does not claim to infer model intelligence from success rate, and it does not convert token counts into fake cost estimates. A future trustworthy price/quality signal can be added as another evidence source without changing the Type/Provider boundary.
+
+### Reasoning language
+
+Open **Kiro BYO -> Settings -> 推理与语言** to choose the presentation language used for user-visible Thinking/reasoning text. The default is **Auto**, which follows the current user conversation rather than the application UI language. Manual choices include Simplified/Traditional Chinese, English, Japanese and Korean; the config accepts other valid locale tags for forward compatibility.
+
+The policy is deliberately terminology-aware rather than a machine-translation layer. Protocol/API/model/product names, acronyms, code symbols, parameter names, file paths, commands and mathematical notation stay in their natural/original form whenever that is more precise. It is also deliberately independent of deep-thinking Auto/On/Off and reasoning effort. Providers that expose no visible reasoning remain unchanged, and Kiro BYO does not synthesize or translate hidden/private chain-of-thought.
+
+### Management status surface
+
+The App exposes one backend-owned overview snapshot that combines Integration,
+Provider/model discovery, credential-store identity, runtime session capabilities,
+native-tool inventory and metadata-only turn diagnostics. Health/alert policy is
+computed in the Python backend and rendered by the UI; the React page does not
+independently guess whether the backend is ready. No API key, prompt, response
+body or tool arguments/results are included in the snapshot.
+
+On desktop the Kiro BYO sidebar keeps the compact runtime summary visible while
+Providers, Models, Modes, Accounts, Records and Settings are open. Clicking the Kiro BYO header
+returns to a compact single-screen Overview; normal desktop-height Overview does
+not require a page scrollbar, while genuinely long data regions use local scrolling.
+
+### Session event log
+
+0.1.3 persists Kiro BYO backend conversation state as a typed append-only event
+stream. `Session.messages`, sticky routing pins and provider continuation state are
+runtime projections of canonical events; schema-v3 session files therefore avoid a
+second durable routing/transcript truth. Rollback, steering, compaction and
+final-review replacement remain reconstructable instead of rewriting history.
+Schema-v1/v2 records are accepted and migrated in memory, then written as schema-v3
+on the next save. See `SESSION_EVENT_MODEL.md` for the event vocabulary and migration
+rules.
+
+### Runtime trace and Records
+
+Kiro BYO keeps a bounded **runtime event stream** beside the metadata-only turn telemetry.
+The event stream follows ACP ingress/egress, provider rounds, streaming deltas, deferred
+tool search, native/MCP tool execution and turn completion, which makes the harness
+inspectable without coupling observability to a specific Provider. The normal App surface
+is **Records**: it presents request outcomes, token/cache usage, routing evidence and
+recovery in readable cards/tables; raw event payloads are hidden behind per-record details.
+
+The `KIRO_BYO_RUNTIME_TRACE` environment variable controls content retention:
+
+```text
+off       no runtime event ledger
+metadata  default; event/routing facts and payload shapes only
+full      local debugging; includes prompt/response/tool content
 ```
 
-Service ports, systemd/launchd behavior, containers, and remote-host access are
-documented in the [install guide](docs/guides/install.md#running-as-a-service),
-[Docker guide](docs/guides/docker.md), and
-[remote host guide](docs/guides/remote-and-mobile.md).
+`full` mode recursively redacts credential-shaped fields such as API keys,
+Authorization headers, tokens, cookies and passwords before writing JSONL, but it
+can still contain user/workspace content and should be treated as sensitive local
+debug data. The App's **Records** surface loads recent runtime events only when that page is opened and exposes raw event data only on demand. Runtime trace data is never shipped in the release archive.
 
-Use `kirocrew config get`, `kirocrew config set <key> <value>`, and
-`kirocrew config edit` for the main configuration. Set a process port with
-`KIROCREW_PORT` or `kirocrew gateway --port <n>`. Start troubleshooting with
-`kirocrew doctor`, then inspect `kirocrew logs` (or `kirocrew logs -f`). See the
-[troubleshooting guide](src/kiro_crew/docs/troubleshooting.md) for log sources,
-levels, diagnostics bundles, and recovery steps.
+## Crew 0.10 integration architecture
 
-## Anonymous usage telemetry
+Only **KiroCrew 0.10 source-compatible builds** are supported; the audited baseline is
+`v0.10.0-insider.4` (`e9bfada`). KiroCrew 0.9 is no longer installable through
+this release. The semantic `adaptive10` transformer patches inspected upstream
+ACP/runtime/dashboard seams and creates one BYO-owned harness module. It retains
+transactional preflight, reversible installation and fail-closed startup repair.
 
-Kiro Crew sends **one anonymous heartbeat per day** so maintainers can see how
-many copies are actively running and which releases, Python minors, and install
-paths still need support. After a successful install or update from the official
-app catalog, it also sends one anonymous per-app receipt. Both signals are
-enabled by default, but first egress waits until the first-run privacy disclosure
-has been shown; they use the same controls below.
+The 0.10 transformer internally shares several ACP transformation helpers that
+originated in earlier versions, but no Crew 0.9 adapter, CI job or installer path
+is shipped. Saved Agent authorization remains owned by Crew, and BYO receives only
+live per-session permissions.
 
-To turn it off, flip **Settings → Privacy → Send anonymous usage heartbeat** in
-the dashboard (the same switch appears on the last step of first-run
-onboarding). Or from a terminal:
+### Personal Agent / custom-agent fit
 
-```bash
-kirocrew telemetry disable        # persists to config.json
-export KIROCREW_TELEMETRY_DISABLED=1   # or per-shell / per-container
-kirocrew telemetry status         # print exactly what would be sent
+Kiro BYO fits KiroCrew's personal-agent architecture at the **ACP backend** layer:
+Crew remains the owner of personal/custom agent selection and parses JSON/Markdown
+agent specs, while Kiro BYO consumes the live per-session projection. Prompt, tool
+visibility, `allowedTools`, `excludedTools`, projected MCP servers and Crew-injected
+resources are honored; Crew keeps hooks and higher-level personal-agent lifecycle
+governance. Provider/model choice remains Kiro BYO-owned, so an agent template's
+model pin is not allowed to silently cross the backend ownership boundary.
+
+This is why Markdown/custom agents are genuinely usable with Kiro BYO while the
+stronger legacy `member_saved_agent` capability remains intentionally unclaimed:
+BYO supports the personal-agent projection needed to run the session, but does not
+pretend to own Crew's complete saved-member spec lifecycle.
+
+### Crew-authoritative legacy capability card
+
+Kiro BYO does not maintain a private score table. The following 9/10 surface is a
+**legacy KiroCrew backend-card contract**, not a percentage estimate of official Kiro
+Unified Harness parity. The audited Crew 0.10 seams derive this boundary after
+installation:
+
+```text
+crew_tools                yes
+member_thread_tools       yes
+member_saved_agent        no
+side_chat_tools           yes
+subagent_continuation     yes
+mid_turn_steer            yes
+manual_compact            yes
+reasoning_effort          yes
+model_switch              yes
+markdown_agents           yes
+                           = 9 / 10
 ```
 
-The toggle and `kirocrew telemetry disable` write the same setting, so either
-one sticks across restarts and upgrades. `KIROCREW_TELEMETRY_DISABLED` overrides
-both — when it is set, the dashboard toggle is disabled and says so.
+Kiro BYO now participates in Crew's own per-session member-dispatch and member-panel
+mounts, so member threads use the selected Kiro BYO harness without a second model
+selection path. It intentionally still does **not** claim `member_saved_agent`: that
+Crew capability means full saved-member activation with host-observable lifecycle
+evidence, which is stronger than per-session agent/prompt/tool projection. Markdown-defined
+agents are now supported through the same host-format seam as KAS: Crew parses the
+user-level JSON/Markdown spec and Kiro BYO consumes the projected active agent over
+`session/new` / `session/load`. Native Kiro CLI may therefore still score differently
+on this compact card; the number is not a parity percentage.
 
-**Exactly these five fields are sent, at most once per day, and nothing else:**
+## Provider configuration
 
-| Field | Example | Why |
-|-------|---------|-----|
-| Random instance id | `9c75560d…` (UUID4) | Lets us count how many copies ran on a given day. Generated once on first run and derived from nothing — not your hostname, username, MAC, IP, or any account. It identifies an installed copy, never a person. |
-| App version | `0.1.2` | Which releases are still in use. **Release number only** — build stamps like `-nightly.20260731t065756` are stripped before sending, because a per-build timestamp is near-unique and would help identify a specific machine. |
-| Python minor version | `3.12` | When the minimum can move up |
-| Install path | `dmg` | Which distribution format people actually use |
-| First-send flag | `1` / `0` | First successfully reported install vs returning |
+Preferred path:
 
-**Official-app install receipts are separate and event-based.** After a
-successful official-catalog install or update, Kiro Crew sends one GET to
-`/b/1/install/<app-slug>?t=<token>&k=<fresh|update>&v=<release>` on the same
-telemetry host. The slug is the public catalog identifier. `t` is the first 32
-hex characters of HMAC-SHA256 keyed by an independent local receipt secret over
-`app-install:<slug>`; that secret never leaves the machine, so tokens for
-different apps cannot be linked to each other or to the heartbeat install id.
-`k` separates fresh installs from updates, and `v` is the same release-only Kiro
-Crew version clamp used by the heartbeat.
+```text
+Kiro BYO -> Providers
+  -> provider preset or custom endpoint
+  -> API Key
+  -> Save & discover models
 
-Receipts are emitted only for bundled or edition-provided official catalog
-entries. Apps from user-configured registries, local-directory installs, and
-self-registered apps emit nothing, so private app names never leave the machine.
-If the receipt-only secret cannot be persisted, the receipt is skipped.
-
-This list used to be nine fields. Release channel, OS, CPU architecture and
-governance posture were **removed** — each was coarse on its own, but the
-instance id is stable, so those attributes all describe the *same* copy and
-together they narrowed the group any one install blends into far more than any
-single field suggests.
-
-We report this as **Daily Active Crews** rather than "users": Kiro Crew has
-no account system of its own, and the Kiro sign-in that `kiro-cli` uses for
-model access is never read or sent. There is no way to resolve a copy to a
-person, so one person running Kiro Crew on three machines counts as three
-Crews.
-
-**Never sent:** your prompts, model responses, file contents, file paths, repo
-or branch names, credentials, environment variables, hostname, username, or IP
-address. The receiving CDN is configured **not to log client IP addresses** — the
-log delivery does not include that field, so no IP is stored at all.
-
-**Automatically off** in CI, and whenever `KIROCREW_HOME` points somewhere other
-than `~/.kiro/crew` (dev instances and pods are never counted).
-
-**Enterprise administrators can pin it off entirely.** A `capabilities.telemetry`
-entry in the security policy blocks both outbound signals regardless of the local
-setting, and the dashboard toggle then says so instead of offering a change that
-would not take effect:
-
-```json
-{"version": 1, "boot": {"fail_closed": true},
- "capabilities": {"telemetry": {"enabled": false}}}
+Kiro BYO -> Models
+  -> Mode: Tiga
+  -> Type: Multi Type (default)
 ```
 
-See [docs/system-specs/modules/governance.md](docs/system-specs/modules/governance.md).
+API keys are stored outside `providers.json` through the operating-system
+credential store. Model capability is model-scoped: reasoning controls, tool-use
+metadata and context-window information are published only when known or
+discovered. Unknown values remain unknown rather than receiving guessed defaults.
 
-This is separate from `telemetry.enabled`, which controls **local-only**
-performance metrics that never leave your machine. See
-[docs/system-specs/modules/metrics.md](docs/system-specs/modules/metrics.md).
+### Kiro BYO modes and execution routing
 
-## Docs and contributing
+Kiro BYO exposes its own execution mode instead of presenting a fake provider model named `auto`. The built-in mode is **Tiga**. Its default **Multi Type** is the balanced mode intended to match the role of an official Auto system: it re-evaluates every turn after the current prompt and context are known and may use one or multiple models when that improves expected value. Manual concrete-model selection bypasses BYO mode routing completely.
 
-| Topic | Start here |
-|---|---|
-| Install and packaging | [Install and build](docs/guides/install.md), [Windows](docs/guides/windows-install.md), [Docker](docs/guides/docker.md), [Desktop](docs/build/desktop-app.md), [Remote host](docs/guides/remote-and-mobile.md), [Release process](docs/build/release.md) |
-| Product capabilities | [Features](src/kiro_crew/docs/index.md), [Skills](skills/README.md), [All user docs](src/kiro_crew/docs/README.md) |
-| All documentation | [docs/](docs/README.md) for contributor and architecture docs |
-| Channels | [Slack](docs/guides/slack-setup.md), [Discord](src/kiro_crew/docs/discord-integration.md), [Telegram](src/kiro_crew/docs/telegram-integration.md), [Teams](src/kiro_crew/docs/teams-integration.md), [Webex](src/kiro_crew/docs/webex-integration.md), [WeCom](src/kiro_crew/docs/wecom-integration.md), [WeChat (Weixin)](src/kiro_crew/docs/weixin-integration.md), [WhatsApp](src/kiro_crew/docs/whatsapp-integration.md), [Feishu (Lark)](src/kiro_crew/docs/feishu-integration.md), [iMessage](src/kiro_crew/docs/imessage-integration.md) |
-| Architecture | [System architecture](docs/architecture/overview.md), [Memory](docs/system-specs/modules/memory-skills-hooks.md), [MCP](docs/architecture/mcp.md), [App Kit](docs/app-kit/getting-started.md) |
-| Trust and dependencies | [Security](docs/architecture/security-deep-dive.md), [Security policy](SECURITY.md) |
-| Project work | [Contributing](CONTRIBUTING.md), [Tenets](TENETS.md), [Governance](GOVERNANCE.md), [Maintainers](MAINTAINERS.md), [AI assistant rules](AGENTS.md), [Changelog](CHANGELOG.md) |
+Internally, Tiga is implemented by the built-in **Tiga Policy Pack**, with **Multi Type** selected by default:
 
-Contributions are welcome. Follow [CONTRIBUTING.md](CONTRIBUTING.md) for setup,
-change-scoped validation, commit format, and the pull-request workflow. Use
-[GitHub Issues](https://github.com/kirodotdev/KiroCrew/issues) for bugs and
-feature requests; report vulnerabilities privately through
-[SECURITY.md](SECURITY.md).
+- **Sky Type** — minimize latency and cost. Usually single-pass; exceptionally hard/high-reasoning turns may use a low-overhead verifier.
+- **Multi Type** — maximize expected value; recommended default. It stays single-pass for ordinary work and adds a value-oriented verifier only when complexity/risk justifies the extra pass.
+- **Power Type** — maximize capability and reliability while retaining practical latency/cost bounds. Complex, coding, tool-heavy, or high-reasoning turns proactively gain a strong independent verifier.
+- **Glitter Type** — long-task multi-model collaboration. A strong-tier lead strictly owns planning, changes and the final answer; each pure gathering subtask can be re-routed to the best eligible fast-tier worker (same-provider affinity is only a preference), and final review stays in the strong tier. If no capable strong leader exists, Glitter fails closed instead of silently downgrading.
+
+The built-in Tiga orchestration ceilings are intentionally distinct: Sky / Multi / Power / Glitter allow at most **1 / 2 / 3 / 4** parallel read-only Workers. The ceiling is not a target: narrow or mutation-heavy work still stays smaller, and the Leader remains the single writer.
+
+These four names are no longer hard-coded router branches. They are data in the
+**Tiga Policy Pack**. The core Execution Planner consumes a generic Policy Pack
+schema, so other modes (for example Dyna, Gaia, Cosmos, or a user-defined work
+profile) can provide different Types without changing router code. In the UI the user sees **Mode / Type**; “Policy Pack” is the internal extension contract. User packs
+are JSON files under `<KIRO_BYO_HOME>/policy_packs/` and are re-read on the next
+config/UI access; no process restart is required. A custom file may also replace a
+built-in pack id intentionally. See `POLICY_PACKS.md`.
+
+Policy Pack v2 deliberately splits `semantics` from `execution`. KiroCrew/UI and the assistant may consume the semantic projection when the user asks what a Type means; the Turn Engine compiles only the execution half into `ExecutionIntent` and therefore has no dependency on the product-facing Tiga Type names. There is still no model/tool API that can switch Type: user selection remains authoritative in KiroCrew.
+
+Policy packs describe execution intent only. They do **not** change model-owned
+capabilities. For a model whose deep-thinking switch is user-set to **On** or **Off**,
+that choice is a hard lock; **Auto** delegates the per-invocation decision to the current
+Type. Reasoning effort is a separate control: an explicit user effort level is also a
+hard lock, while Auto/default lets the Type choose only among levels that the concrete
+model really exposes. Fixed-on/fixed-off thinking and models with no effort control
+cannot be changed by a Type.
+
+Agent execution is not cut off by a small fixed round count. Productive long tool chains
+may continue. A provider-neutral execution guard watches repeated identical actions and
+short stagnating cycles, asks the model to re-plan once, and stops only if the same lack
+of progress continues; a high emergency backstop exists only for catastrophic runaway.
+
+Routing first removes models that explicitly cannot satisfy the turn (for example
+image input, **required and currently available** tool use, or context capacity), then
+scores the eligible pool using task complexity, reasoning effort, code/tool pressure
+and model routing hints. Tool visibility is tracked separately from current-turn tool
+intent, so an Agent merely having tools configured does not force casual turns onto a
+tool-capable model. Providers may supply explicit `routing.quality`, `routing.speed` and `routing.economy` values plus a many-to-many `routing.tiers` role list. A model can therefore participate in several pools (for example `strong` + `balanced`, or `strong` + `fast`), and every Tiga Type remains free to use one or multiple eligible models according to its execution policy. Each routing fact also carries source/confidence metadata. Authority is local operator override > live provider discovery > verified curated profile > historical cache > generic model-name inference; name inference is low-confidence and remains a backward-compatible last resort. The selected model, ordered candidates, scores, signals and safe first-request fallback are recorded in Runtime Trace. Provider cards therefore do not have a separate "default model" control.
+
+0.1.3 keeps an **OpenAI-compatible** fallback transport, but verified official
+endpoints use the highest-fidelity documented provider path when it materially
+preserves reasoning/tool continuation or provider-side state/cache behavior. DeepSeek,
+OpenAI, xAI/Grok, Volcengine Ark, Baidu Qianfan and Groq use Responses-family
+transports; Anthropic uses Messages; Gemini uses Interactions; Cohere uses Chat V2.
+Moonshot/Kimi, Xiaomi MiMo and Zhipu/GLM retain their official Chat wire extensions so
+`reasoning_content` and tool-call state survive agent loops. Xiaomi has separate first-party
+connection templates for pay-as-you-go (`sk-`, `https://api.xiaomimimo.com/v1`) and Token
+Plan (`tp-`/`ttp-`, `https://token-plan-{cn,sgp,ams}.xiaomimimo.com/v1`). Pay-as-you-go
+discovers the current Pro / Flash / Pro-Ultraspeed agent models from Xiaomi's mixed `/models`
+catalogue; Token Plan uses Xiaomi's documented subscription entitlement for V2.6 Pro/Flash.
+Both paths retain the same native MiMo reasoning/tool continuation adapter.
+MiniMax uses its officially recommended Anthropic-Messages-compatible endpoint with
+interleaved thinking and prompt caching. Qwen uses a provider-aware Chat adapter for its official compatibility
+endpoint and automatically upgrades documented Qwen 3.5–3.8 models to Responses;
+Tencent Hunyuan likewise upgrades the documented Hy3/Hy4 models to Responses.
+Mistral uses a dedicated Chat adapter that preserves `ThinkChunk` reasoning and a
+stable per-session `prompt_cache_key`. StepFun intentionally remains on its documented
+OpenAI Chat interface: Kiro BYO does not invent an unpublished proprietary protocol.
+
+Provider-native behavior is enabled only on the preset's verified official endpoint. If
+a preset is pointed at a relay/custom Base URL, Kiro BYO fails safe to OpenAI
+Compatible and does not inject vendor-specific capability metadata or wire formats.
+
+## ACP control plane
+
+Kiro BYO supports multiplexed `session/new`, durable `session/load` / resume,
+streaming, cancellation, mid-turn steer, model/effort config options and manual
+compact. Saved Crew agent projection is persisted per session and re-projected on
+load, without advertising the stronger Crew `member_saved_agent` capability.
+
+`session/new`, load and resume validate the ACP working directory and
+`additionalDirectories`. Client-supplied additional directories are not silently
+resurrected when the client omits them later.
+
+The prompt implementation is split into a small request coordinator plus an
+independent provider/tool loop and dedicated native/MCP/deferred-search helpers;
+this keeps transport, tool execution and lifecycle recovery from sharing one
+monolithic dispatch function.
+
+## Native host tools and permission boundary
+
+Core tool surface:
+
+```text
+read              read one text file / compatibility directory read
+read_files        read several known text files in one tool call
+list_directory    explicit directory listing
+glob              path-pattern discovery
+grep              regex content search
+write             atomic full-file create/replace
+edit              unified-diff/apply-patch
+delete_file       regular-file-only deletion
+shell                    bounded one-shot PowerShell / shell command execution
+execute_shell_process     start a session-owned long-running process
+control_shell_process     read/status/stdin/terminate/kill a long-running process
+code_symbols              structural symbols / code overview (Python AST fallback)
+code_query                raw Tree-sitter structural query (advertised only when installed)
+web_fetch                 public HTTP/HTTPS text fetch
+web_search                public web result search
+```
 
 
-## Contributors
+### Long-running process model
 
-Kiro Crew was made possible by its internal community, the people who supported the
-project and shipped its code, together with everyone who has since opened a pull
-request in the open. This is that founding group; as Kiro Crew grows in the open, we
-look forward to many more contributors joining them. Thank you to everyone who helped
-make this tool possible:
+`execute_shell_process` promotes an OS process to a first-class, session-owned
+Harness resource. Each process receives a stable `process_id`; stdout/stderr use
+bounded ring buffers; stdin can be written later; and terminate/kill target the
+whole process group/tree rather than only the shell parent. Completed-process
+history is also bounded so a long-lived ACP session cannot accumulate unlimited
+output handles. Replacing, closing or deleting the ACP session closes its native
+runtime and terminates all remaining session-owned processes. `session/cancel` continues to cancel the current turn without implicitly killing intentionally persistent background servers. Mid-turn `steer` is different: it interrupts the current one-shot shell/process action, preserves the session, injects the newer user instruction and lets the Agent replan.
 
-<a href="https://github.com/0618" title="MJ Zhang"><img src="https://github.com/0618.png?size=64" width="64" height="64" alt="MJ Zhang" /></a>
-<a href="https://github.com/0V" title="G2"><img src="https://github.com/0V.png?size=64" width="64" height="64" alt="G2" /></a>
-<a href="https://github.com/aahei" title="Ahei"><img src="https://github.com/aahei.png?size=64" width="64" height="64" alt="Ahei" /></a>
-<a href="https://github.com/abe238" title="Abe Diaz (@abe238)"><img src="https://github.com/abe238.png?size=64" width="64" height="64" alt="Abe Diaz (@abe238)" /></a>
-<a href="https://github.com/abhishekdhameja" title="Abhishek Dhameja"><img src="https://github.com/abhishekdhameja.png?size=64" width="64" height="64" alt="Abhishek Dhameja" /></a>
-<a href="https://github.com/Abhishekmitra-slg" title="Abhishek Mitra"><img src="https://github.com/Abhishekmitra-slg.png?size=64" width="64" height="64" alt="Abhishek Mitra" /></a>
-<a href="https://github.com/abhishekshasthry" title="Abhishek Shasthry B M"><img src="https://github.com/abhishekshasthry.png?size=64" width="64" height="64" alt="Abhishek Shasthry B M" /></a>
-<a href="https://github.com/abirkel" title="abirkel"><img src="https://github.com/abirkel.png?size=64" width="64" height="64" alt="abirkel" /></a>
-<a href="https://github.com/acdoussan" title="acdoussan"><img src="https://github.com/acdoussan.png?size=64" width="64" height="64" alt="acdoussan" /></a>
-<a href="https://github.com/acluft" title="acluft"><img src="https://github.com/acluft.png?size=64" width="64" height="64" alt="acluft" /></a>
-<a href="https://github.com/adam-dunc" title="Adam Duncan"><img src="https://github.com/adam-dunc.png?size=64" width="64" height="64" alt="Adam Duncan" /></a>
-<a href="https://github.com/AddisonTustin" title="AddisonTustin"><img src="https://github.com/AddisonTustin.png?size=64" width="64" height="64" alt="AddisonTustin" /></a>
-<a href="https://github.com/adiarora06" title="Adi Arora"><img src="https://github.com/adiarora06.png?size=64" width="64" height="64" alt="Adi Arora" /></a>
-<a href="https://github.com/adlio" title="Aaron Longwell"><img src="https://github.com/adlio.png?size=64" width="64" height="64" alt="Aaron Longwell" /></a>
-<a href="https://github.com/adunuthulan" title="Nirav Adunuthula"><img src="https://github.com/adunuthulan.png?size=64" width="64" height="64" alt="Nirav Adunuthula" /></a>
-<a href="https://github.com/Aiden-Gaines" title="Aiden Gaines"><img src="https://github.com/Aiden-Gaines.png?size=64" width="64" height="64" alt="Aiden Gaines" /></a>
-<a href="https://github.com/akhjones" title="Alexander Jones"><img src="https://github.com/akhjones.png?size=64" width="64" height="64" alt="Alexander Jones" /></a>
-<a href="https://github.com/akshitdesai" title="Akshit Desai"><img src="https://github.com/akshitdesai.png?size=64" width="64" height="64" alt="Akshit Desai" /></a>
-<a href="https://github.com/Albisourous" title="Albin Shrestha"><img src="https://github.com/Albisourous.png?size=64" width="64" height="64" alt="Albin Shrestha" /></a>
-<a href="https://github.com/alecgdouglas" title="Alec Douglas"><img src="https://github.com/alecgdouglas.png?size=64" width="64" height="64" alt="Alec Douglas" /></a>
-<a href="https://github.com/alejacre" title="Alejandro"><img src="https://github.com/alejacre.png?size=64" width="64" height="64" alt="Alejandro" /></a>
-<a href="https://github.com/alekwo" title="Aleksander W. Oleszkiewicz (auticon)"><img src="https://github.com/alekwo.png?size=64" width="64" height="64" alt="Aleksander W. Oleszkiewicz (auticon)" /></a>
-<a href="https://github.com/alevz257" title="Johanes Glenn"><img src="https://github.com/alevz257.png?size=64" width="64" height="64" alt="Johanes Glenn" /></a>
-<a href="https://github.com/Alexander-Yuan" title="Alexander-Yuan"><img src="https://github.com/Alexander-Yuan.png?size=64" width="64" height="64" alt="Alexander-Yuan" /></a>
-<a href="https://github.com/AlexShen101" title="Alex Shen"><img src="https://github.com/AlexShen101.png?size=64" width="64" height="64" alt="Alex Shen" /></a>
-<a href="https://github.com/amadsalmon" title="Amad Salmon"><img src="https://github.com/amadsalmon.png?size=64" width="64" height="64" alt="Amad Salmon" /></a>
-<a href="https://github.com/amergrgic" title="Amer Grgic"><img src="https://github.com/amergrgic.png?size=64" width="64" height="64" alt="Amer Grgic" /></a>
-<a href="https://github.com/AmirNaghibi" title="Amir Naghibi"><img src="https://github.com/AmirNaghibi.png?size=64" width="64" height="64" alt="Amir Naghibi" /></a>
-<a href="https://github.com/amulya349" title="Amulya Kumar Sahoo"><img src="https://github.com/amulya349.png?size=64" width="64" height="64" alt="Amulya Kumar Sahoo" /></a>
-<a href="https://github.com/anant-kaushik" title="Anant Kaushik"><img src="https://github.com/anant-kaushik.png?size=64" width="64" height="64" alt="Anant Kaushik" /></a>
-<a href="https://github.com/AndrewSDHarsh" title="AndrewSDHarsh"><img src="https://github.com/AndrewSDHarsh.png?size=64" width="64" height="64" alt="AndrewSDHarsh" /></a>
-<a href="https://github.com/andrewtakeshi" title="Andrew Golightly"><img src="https://github.com/andrewtakeshi.png?size=64" width="64" height="64" alt="Andrew Golightly" /></a>
-<a href="https://github.com/andreyaurelien" title="andreyaurelien"><img src="https://github.com/andreyaurelien.png?size=64" width="64" height="64" alt="andreyaurelien" /></a>
-<a href="https://github.com/andriifonaskov" title="andriifonaskov"><img src="https://github.com/andriifonaskov.png?size=64" width="64" height="64" alt="andriifonaskov" /></a>
-<a href="https://github.com/angeloyu" title="angeloyu"><img src="https://github.com/angeloyu.png?size=64" width="64" height="64" alt="angeloyu" /></a>
-<a href="https://github.com/aniketshukla1" title="Aniket Shukla"><img src="https://github.com/aniketshukla1.png?size=64" width="64" height="64" alt="Aniket Shukla" /></a>
-<a href="https://github.com/aniruddhaadak80" title="ANIRUDDHA ADAK"><img src="https://github.com/aniruddhaadak80.png?size=64" width="64" height="64" alt="ANIRUDDHA ADAK" /></a>
-<a href="https://github.com/anjn98" title="anjn98"><img src="https://github.com/anjn98.png?size=64" width="64" height="64" alt="anjn98" /></a>
-<a href="https://github.com/anmolsaxena10" title="Anmol Saxena"><img src="https://github.com/anmolsaxena10.png?size=64" width="64" height="64" alt="Anmol Saxena" /></a>
-<a href="https://github.com/anshulgupta0803" title="Anshul Gupta"><img src="https://github.com/anshulgupta0803.png?size=64" width="64" height="64" alt="Anshul Gupta" /></a>
-<a href="https://github.com/Anthony-dominianni" title="Anthony-dominianni"><img src="https://github.com/Anthony-dominianni.png?size=64" width="64" height="64" alt="Anthony-dominianni" /></a>
-<a href="https://github.com/Anurag461" title="Anurag Kashyap"><img src="https://github.com/Anurag461.png?size=64" width="64" height="64" alt="Anurag Kashyap" /></a>
-<a href="https://github.com/apoorv06s" title="apoorv06s"><img src="https://github.com/apoorv06s.png?size=64" width="64" height="64" alt="apoorv06s" /></a>
-<a href="https://github.com/aqiaojoe08" title="aqiaojoe08"><img src="https://github.com/aqiaojoe08.png?size=64" width="64" height="64" alt="aqiaojoe08" /></a>
-<a href="https://github.com/aravance" title="Alex Avance"><img src="https://github.com/aravance.png?size=64" width="64" height="64" alt="Alex Avance" /></a>
-<a href="https://github.com/architect4dj" title="architect4dj"><img src="https://github.com/architect4dj.png?size=64" width="64" height="64" alt="architect4dj" /></a>
-<a href="https://github.com/Arin016" title="Arin Tumbagi"><img src="https://github.com/Arin016.png?size=64" width="64" height="64" alt="Arin Tumbagi" /></a>
-<a href="https://github.com/arjunsoota" title="Arjun Soota"><img src="https://github.com/arjunsoota.png?size=64" width="64" height="64" alt="Arjun Soota" /></a>
-<a href="https://github.com/arimorgan" title="Ariana Morgan"><img src="https://github.com/arimorgan.png?size=64" width="64" height="64" alt="Ariana Morgan" /></a>
-<a href="https://github.com/arpan98" title="Arpan Banerjee"><img src="https://github.com/arpan98.png?size=64" width="64" height="64" alt="Arpan Banerjee" /></a>
-<a href="https://github.com/artemu78" title="ArtemReva"><img src="https://github.com/artemu78.png?size=64" width="64" height="64" alt="ArtemReva" /></a>
-<a href="https://github.com/arthurspa" title="Arthur Silva"><img src="https://github.com/arthurspa.png?size=64" width="64" height="64" alt="Arthur Silva" /></a>
-<a href="https://github.com/arvindsrinathus-tech" title="arvindsrinathus-tech"><img src="https://github.com/arvindsrinathus-tech.png?size=64" width="64" height="64" alt="arvindsrinathus-tech" /></a>
-<a href="https://github.com/AryPathania" title="Ary Pathania"><img src="https://github.com/AryPathania.png?size=64" width="64" height="64" alt="Ary Pathania" /></a>
-<a href="https://github.com/asaifuddin18" title="Aziz Saifuddin"><img src="https://github.com/asaifuddin18.png?size=64" width="64" height="64" alt="Aziz Saifuddin" /></a>
-<a href="https://github.com/asedarski" title="Alicia Sedarski"><img src="https://github.com/asedarski.png?size=64" width="64" height="64" alt="Alicia Sedarski" /></a>
-<a href="https://github.com/ash663" title="Ashish Patil"><img src="https://github.com/ash663.png?size=64" width="64" height="64" alt="Ashish Patil" /></a>
-<a href="https://github.com/ashryanbeats" title="Ash Ryan Arnwine"><img src="https://github.com/ashryanbeats.png?size=64" width="64" height="64" alt="Ash Ryan Arnwine" /></a>
-<a href="https://github.com/ashtnemi448" title="ashtnemi448"><img src="https://github.com/ashtnemi448.png?size=64" width="64" height="64" alt="ashtnemi448" /></a>
-<a href="https://github.com/ashvinctrl" title="Ashvin"><img src="https://github.com/ashvinctrl.png?size=64" width="64" height="64" alt="Ashvin" /></a>
-<a href="https://github.com/ashvinnihalani" title="Ashvin Nihalani"><img src="https://github.com/ashvinnihalani.png?size=64" width="64" height="64" alt="Ashvin Nihalani" /></a>
-<a href="https://github.com/aswindjs" title="Aswin Damodar"><img src="https://github.com/aswindjs.png?size=64" width="64" height="64" alt="Aswin Damodar" /></a>
-<a href="https://github.com/ataernam-coder" title="ataernam-coder"><img src="https://github.com/ataernam-coder.png?size=64" width="64" height="64" alt="ataernam-coder" /></a>
-<a href="https://github.com/atomsbaza" title="PISIT KOOLPLUKPOL"><img src="https://github.com/atomsbaza.png?size=64" width="64" height="64" alt="PISIT KOOLPLUKPOL" /></a>
-<a href="https://github.com/av-writes-code" title="av-writes-code"><img src="https://github.com/av-writes-code.png?size=64" width="64" height="64" alt="av-writes-code" /></a>
-<a href="https://github.com/avgvi" title="August Vi"><img src="https://github.com/avgvi.png?size=64" width="64" height="64" alt="August Vi" /></a>
-<a href="https://github.com/avmikhli1" title="avmikhli1"><img src="https://github.com/avmikhli1.png?size=64" width="64" height="64" alt="avmikhli1" /></a>
-<a href="https://github.com/awsdataarchitect" title="Vivek V."><img src="https://github.com/awsdataarchitect.png?size=64" width="64" height="64" alt="Vivek V." /></a>
-<a href="https://github.com/ayahiro1729" title="ayahiro1729"><img src="https://github.com/ayahiro1729.png?size=64" width="64" height="64" alt="ayahiro1729" /></a>
-<a href="https://github.com/bayshanhai-dev" title="Steven Chen"><img src="https://github.com/bayshanhai-dev.png?size=64" width="64" height="64" alt="Steven Chen" /></a>
-<a href="https://github.com/beau-bright" title="beau-bright"><img src="https://github.com/beau-bright.png?size=64" width="64" height="64" alt="beau-bright" /></a>
-<a href="https://github.com/beholla-amzn" title="beholla-amzn"><img src="https://github.com/beholla-amzn.png?size=64" width="64" height="64" alt="beholla-amzn" /></a>
-<a href="https://github.com/Behordeun" title="Muhammad Abiodun SULAIMAN"><img src="https://github.com/Behordeun.png?size=64" width="64" height="64" alt="Muhammad Abiodun SULAIMAN" /></a>
-<a href="https://github.com/bellingman" title="bellingman"><img src="https://github.com/bellingman.png?size=64" width="64" height="64" alt="bellingman" /></a>
-<a href="https://github.com/benquack88" title="benquack88"><img src="https://github.com/benquack88.png?size=64" width="64" height="64" alt="benquack88" /></a>
-<a href="https://github.com/benwart-consensus" title="Ben Wart"><img src="https://github.com/benwart-consensus.png?size=64" width="64" height="64" alt="Ben Wart" /></a>
-<a href="https://github.com/berylqliu1122" title="berylqliu1122"><img src="https://github.com/berylqliu1122.png?size=64" width="64" height="64" alt="berylqliu1122" /></a>
-<a href="https://github.com/bgrubin-amzn" title="bgrubin-amzn"><img src="https://github.com/bgrubin-amzn.png?size=64" width="64" height="64" alt="bgrubin-amzn" /></a>
-<a href="https://github.com/bhargav5000" title="bhargav5000"><img src="https://github.com/bhargav5000.png?size=64" width="64" height="64" alt="bhargav5000" /></a>
-<a href="https://github.com/bigchkn" title="bigchkn"><img src="https://github.com/bigchkn.png?size=64" width="64" height="64" alt="bigchkn" /></a>
-<a href="https://github.com/billsbdb3" title="William Berry"><img src="https://github.com/billsbdb3.png?size=64" width="64" height="64" alt="William Berry" /></a>
-<a href="https://github.com/billygerhard" title="Billy Gerhard"><img src="https://github.com/billygerhard.png?size=64" width="64" height="64" alt="Billy Gerhard" /></a>
-<a href="https://github.com/bkarson" title="bkarson"><img src="https://github.com/bkarson.png?size=64" width="64" height="64" alt="bkarson" /></a>
-<a href="https://github.com/bl457hun73r" title="Matias Solis"><img src="https://github.com/bl457hun73r.png?size=64" width="64" height="64" alt="Matias Solis" /></a>
-<a href="https://github.com/blandes" title="Bryan Landes"><img src="https://github.com/blandes.png?size=64" width="64" height="64" alt="Bryan Landes" /></a>
-<a href="https://github.com/bloom7yue" title="Rina Wulandari"><img src="https://github.com/bloom7yue.png?size=64" width="64" height="64" alt="Rina Wulandari" /></a>
-<a href="https://github.com/BlumenthalJD" title="Joel Blumenthal"><img src="https://github.com/BlumenthalJD.png?size=64" width="64" height="64" alt="Joel Blumenthal" /></a>
-<a href="https://github.com/bobbyearl" title="Bobby Earl"><img src="https://github.com/bobbyearl.png?size=64" width="64" height="64" alt="Bobby Earl" /></a>
-<a href="https://github.com/Bojun-Feng" title="Bojun Feng"><img src="https://github.com/Bojun-Feng.png?size=64" width="64" height="64" alt="Bojun Feng" /></a>
-<a href="https://github.com/bolichen97" title="Bolin Chen"><img src="https://github.com/bolichen97.png?size=64" width="64" height="64" alt="Bolin Chen" /></a>
-<a href="https://github.com/bowale01" title="Adeleke Adebowale J"><img src="https://github.com/bowale01.png?size=64" width="64" height="64" alt="Adeleke Adebowale J" /></a>
-<a href="https://github.com/brantai" title="Brent Naylor"><img src="https://github.com/brantai.png?size=64" width="64" height="64" alt="Brent Naylor" /></a>
-<a href="https://github.com/breadcentric" title="breadcentric"><img src="https://github.com/breadcentric.png?size=64" width="64" height="64" alt="breadcentric" /></a>
-<a href="https://github.com/brianwthomas" title="Brian Thomas"><img src="https://github.com/brianwthomas.png?size=64" width="64" height="64" alt="Brian Thomas" /></a>
-<a href="https://github.com/btyrrell-mn" title="Bryson Tyrrell"><img src="https://github.com/btyrrell-mn.png?size=64" width="64" height="64" alt="Bryson Tyrrell" /></a>
-<a href="https://github.com/buluoray" title="Ray Xu"><img src="https://github.com/buluoray.png?size=64" width="64" height="64" alt="Ray Xu" /></a>
-<a href="https://github.com/c020627" title="XiaoChen"><img src="https://github.com/c020627.png?size=64" width="64" height="64" alt="XiaoChen" /></a>
-<a href="https://github.com/cabbey" title="Chris Abbey"><img src="https://github.com/cabbey.png?size=64" width="64" height="64" alt="Chris Abbey" /></a>
-<a href="https://github.com/Canaut" title="Canaut"><img src="https://github.com/Canaut.png?size=64" width="64" height="64" alt="Canaut" /></a>
-<a href="https://github.com/caribbeansteve" title="George Coll"><img src="https://github.com/caribbeansteve.png?size=64" width="64" height="64" alt="George Coll" /></a>
-<a href="https://github.com/carttrp" title="carttrp"><img src="https://github.com/carttrp.png?size=64" width="64" height="64" alt="carttrp" /></a>
-<a href="https://github.com/cathar" title="cathar"><img src="https://github.com/cathar.png?size=64" width="64" height="64" alt="cathar" /></a>
-<a href="https://github.com/catoneone" title="Allan"><img src="https://github.com/catoneone.png?size=64" width="64" height="64" alt="Allan" /></a>
-<a href="https://github.com/cbarlow1993" title="cbarlow1993"><img src="https://github.com/cbarlow1993.png?size=64" width="64" height="64" alt="cbarlow1993" /></a>
-<a href="https://github.com/ccidral" title="Celio Cidral"><img src="https://github.com/ccidral.png?size=64" width="64" height="64" alt="Celio Cidral" /></a>
-<a href="https://github.com/chancepants" title="Chance"><img src="https://github.com/chancepants.png?size=64" width="64" height="64" alt="Chance" /></a>
-<a href="https://github.com/ChaonengQuan" title="ChaonengQuan"><img src="https://github.com/ChaonengQuan.png?size=64" width="64" height="64" alt="ChaonengQuan" /></a>
-<a href="https://github.com/chasetrox" title="Chase"><img src="https://github.com/chasetrox.png?size=64" width="64" height="64" alt="Chase" /></a>
-<a href="https://github.com/chengliang8056" title="CHENG"><img src="https://github.com/chengliang8056.png?size=64" width="64" height="64" alt="CHENG" /></a>
-<a href="https://github.com/chenmingwei23" title="Raymond Chen"><img src="https://github.com/chenmingwei23.png?size=64" width="64" height="64" alt="Raymond Chen" /></a>
-<a href="https://github.com/chenyjade" title="Yu Cheng"><img src="https://github.com/chenyjade.png?size=64" width="64" height="64" alt="Yu Cheng" /></a>
-<a href="https://github.com/ChrisBoomhower" title="ChrisBoomhower"><img src="https://github.com/ChrisBoomhower.png?size=64" width="64" height="64" alt="ChrisBoomhower" /></a>
-<a href="https://github.com/chrispaton" title="Chris Paton"><img src="https://github.com/chrispaton.png?size=64" width="64" height="64" alt="Chris Paton" /></a>
-<a href="https://github.com/Christian-Sidak" title="Christian Sidak"><img src="https://github.com/Christian-Sidak.png?size=64" width="64" height="64" alt="Christian Sidak" /></a>
-<a href="https://github.com/christopher-h-johnson" title="Christopher Hanna Johnson"><img src="https://github.com/christopher-h-johnson.png?size=64" width="64" height="64" alt="Christopher Hanna Johnson" /></a>
-<a href="https://github.com/chuazm" title="chuazm"><img src="https://github.com/chuazm.png?size=64" width="64" height="64" alt="chuazm" /></a>
-<a href="https://github.com/chuqijiang2026" title="chuqijiang2026"><img src="https://github.com/chuqijiang2026.png?size=64" width="64" height="64" alt="chuqijiang2026" /></a>
-<a href="https://github.com/cixuuz" title="cixuuuuuuuuz"><img src="https://github.com/cixuuz.png?size=64" width="64" height="64" alt="cixuuuuuuuuz" /></a>
-<a href="https://github.com/Ckarthik18" title="Ckarthik18"><img src="https://github.com/Ckarthik18.png?size=64" width="64" height="64" alt="Ckarthik18" /></a>
-<a href="https://github.com/clareliguori" title="Clare Liguori"><img src="https://github.com/clareliguori.png?size=64" width="64" height="64" alt="Clare Liguori" /></a>
-<a href="https://github.com/Clearedkinkajou" title="Jake Bédard"><img src="https://github.com/Clearedkinkajou.png?size=64" width="64" height="64" alt="Jake Bédard" /></a>
-<a href="https://github.com/cohilla" title="Cody Hill"><img src="https://github.com/cohilla.png?size=64" width="64" height="64" alt="Cody Hill" /></a>
-<a href="https://github.com/colewhitley" title="Cole Whitley"><img src="https://github.com/colewhitley.png?size=64" width="64" height="64" alt="Cole Whitley" /></a>
-<a href="https://github.com/comdaze" title="Sean Yang"><img src="https://github.com/comdaze.png?size=64" width="64" height="64" alt="Sean Yang" /></a>
-<a href="https://github.com/ConnorLoP" title="Connor LoPresti"><img src="https://github.com/ConnorLoP.png?size=64" width="64" height="64" alt="Connor LoPresti" /></a>
-<a href="https://github.com/ConstantineWang" title="Jiacheng Wang"><img src="https://github.com/ConstantineWang.png?size=64" width="64" height="64" alt="Jiacheng Wang" /></a>
-<a href="https://github.com/coozgan" title="Joshyfruit"><img src="https://github.com/coozgan.png?size=64" width="64" height="64" alt="Joshyfruit" /></a>
-<a href="https://github.com/cplieger" title="Christopher Plieger"><img src="https://github.com/cplieger.png?size=64" width="64" height="64" alt="Christopher Plieger" /></a>
-<a href="https://github.com/cruisercohen" title="Matt Cohen"><img src="https://github.com/cruisercohen.png?size=64" width="64" height="64" alt="Matt Cohen" /></a>
-<a href="https://github.com/CrysisDeu" title="Zezhen Xu"><img src="https://github.com/CrysisDeu.png?size=64" width="64" height="64" alt="Zezhen Xu" /></a>
-<a href="https://github.com/Csan25" title="Csan25"><img src="https://github.com/Csan25.png?size=64" width="64" height="64" alt="Csan25" /></a>
-<a href="https://github.com/cschnidr" title="cschnidr"><img src="https://github.com/cschnidr.png?size=64" width="64" height="64" alt="cschnidr" /></a>
-<a href="https://github.com/ctodd" title="Chris Miller"><img src="https://github.com/ctodd.png?size=64" width="64" height="64" alt="Chris Miller" /></a>
-<a href="https://github.com/ctyndall" title="ctyndall"><img src="https://github.com/ctyndall.png?size=64" width="64" height="64" alt="ctyndall" /></a>
-<a href="https://github.com/d-fay" title="Dustin Fay"><img src="https://github.com/d-fay.png?size=64" width="64" height="64" alt="Dustin Fay" /></a>
-<a href="https://github.com/dagayev1" title="Dagadansbot"><img src="https://github.com/dagayev1.png?size=64" width="64" height="64" alt="Dagadansbot" /></a>
-<a href="https://github.com/dajiaohuang" title="Wu Shuwen"><img src="https://github.com/dajiaohuang.png?size=64" width="64" height="64" alt="Wu Shuwen" /></a>
-<a href="https://github.com/DallinKooyman" title="Dallin Kooyman"><img src="https://github.com/DallinKooyman.png?size=64" width="64" height="64" alt="Dallin Kooyman" /></a>
-<a href="https://github.com/dan-alex-nistor" title="Daniel-Alexandru Nistor"><img src="https://github.com/dan-alex-nistor.png?size=64" width="64" height="64" alt="Daniel-Alexandru Nistor" /></a>
-<a href="https://github.com/DanieSharpe" title="DanieSharpe"><img src="https://github.com/DanieSharpe.png?size=64" width="64" height="64" alt="DanieSharpe" /></a>
-<a href="https://github.com/danmcclain" title="Dan McClain"><img src="https://github.com/danmcclain.png?size=64" width="64" height="64" alt="Dan McClain" /></a>
-<a href="https://github.com/darko-mesaros" title="Darko Mesaros"><img src="https://github.com/darko-mesaros.png?size=64" width="64" height="64" alt="Darko Mesaros" /></a>
-<a href="https://github.com/datoastmachine" title="datoastmachine"><img src="https://github.com/datoastmachine.png?size=64" width="64" height="64" alt="datoastmachine" /></a>
-<a href="https://github.com/datowq" title="datowq"><img src="https://github.com/datowq.png?size=64" width="64" height="64" alt="datowq" /></a>
-<a href="https://github.com/davidtlee-amzn" title="davidtlee-amzn"><img src="https://github.com/davidtlee-amzn.png?size=64" width="64" height="64" alt="davidtlee-amzn" /></a>
-<a href="https://github.com/davihara" title="David Hara"><img src="https://github.com/davihara.png?size=64" width="64" height="64" alt="David Hara" /></a>
-<a href="https://github.com/DaxterXS" title="Davide Bisso"><img src="https://github.com/DaxterXS.png?size=64" width="64" height="64" alt="Davide Bisso" /></a>
-<a href="https://github.com/dcorelibran" title="dcorelibran"><img src="https://github.com/dcorelibran.png?size=64" width="64" height="64" alt="dcorelibran" /></a>
-<a href="https://github.com/DebasishTripathy13" title="Debasish Tripathy"><img src="https://github.com/DebasishTripathy13.png?size=64" width="64" height="64" alt="Debasish Tripathy" /></a>
-<a href="https://github.com/derrick0714" title="Xu Deng"><img src="https://github.com/derrick0714.png?size=64" width="64" height="64" alt="Xu Deng" /></a>
-<a href="https://github.com/DeryFerd" title="Dery Ferdika"><img src="https://github.com/DeryFerd.png?size=64" width="64" height="64" alt="Dery Ferdika" /></a>
-<a href="https://github.com/desaip05" title="Parikshit Desai"><img src="https://github.com/desaip05.png?size=64" width="64" height="64" alt="Parikshit Desai" /></a>
-<a href="https://github.com/developer-front" title="Pylyp Borysov"><img src="https://github.com/developer-front.png?size=64" width="64" height="64" alt="Pylyp Borysov" /></a>
-<a href="https://github.com/devsdmf" title="Lucas Mendes"><img src="https://github.com/devsdmf.png?size=64" width="64" height="64" alt="Lucas Mendes" /></a>
-<a href="https://github.com/DFayerman" title="DFayerman"><img src="https://github.com/DFayerman.png?size=64" width="64" height="64" alt="DFayerman" /></a>
-<a href="https://github.com/dgomesbr" title="Diego Magalhães"><img src="https://github.com/dgomesbr.png?size=64" width="64" height="64" alt="Diego Magalhães" /></a>
-<a href="https://github.com/Dhaivat717" title="Dhaivat Patel"><img src="https://github.com/Dhaivat717.png?size=64" width="64" height="64" alt="Dhaivat Patel" /></a>
-<a href="https://github.com/DHILIP-S-E" title="DHILIP S E"><img src="https://github.com/DHILIP-S-E.png?size=64" width="64" height="64" alt="DHILIP S E" /></a>
-<a href="https://github.com/dimwael" title="Wael"><img src="https://github.com/dimwael.png?size=64" width="64" height="64" alt="Wael" /></a>
-<a href="https://github.com/dixitrathod16" title="Dixit R Jain"><img src="https://github.com/dixitrathod16.png?size=64" width="64" height="64" alt="Dixit R Jain" /></a>
-<a href="https://github.com/dkillion" title="Dave Killion"><img src="https://github.com/dkillion.png?size=64" width="64" height="64" alt="Dave Killion" /></a>
-<a href="https://github.com/dmast3r" title="Sourabh Khandelwal"><img src="https://github.com/dmast3r.png?size=64" width="64" height="64" alt="Sourabh Khandelwal" /></a>
-<a href="https://github.com/doc88129" title="Doc"><img src="https://github.com/doc88129.png?size=64" width="64" height="64" alt="Doc" /></a>
-<a href="https://github.com/dominik-richter" title="Dom"><img src="https://github.com/dominik-richter.png?size=64" width="64" height="64" alt="Dom" /></a>
-<a href="https://github.com/donisewell" title="donisewell"><img src="https://github.com/donisewell.png?size=64" width="64" height="64" alt="donisewell" /></a>
-<a href="https://github.com/dougclauson" title="dougclauson"><img src="https://github.com/dougclauson.png?size=64" width="64" height="64" alt="dougclauson" /></a>
-<a href="https://github.com/dpb1" title="David Britton"><img src="https://github.com/dpb1.png?size=64" width="64" height="64" alt="David Britton" /></a>
-<a href="https://github.com/dream-yen" title="dream-yen"><img src="https://github.com/dream-yen.png?size=64" width="64" height="64" alt="dream-yen" /></a>
-<a href="https://github.com/dscriptX" title="dscriptX"><img src="https://github.com/dscriptX.png?size=64" width="64" height="64" alt="dscriptX" /></a>
-<a href="https://github.com/dsm0709" title="Siming Deng"><img src="https://github.com/dsm0709.png?size=64" width="64" height="64" alt="Siming Deng" /></a>
-<a href="https://github.com/dvddpl" title="Davide de Paolis"><img src="https://github.com/dvddpl.png?size=64" width="64" height="64" alt="Davide de Paolis" /></a>
-<a href="https://github.com/dwalleck" title="Daryl Walleck"><img src="https://github.com/dwalleck.png?size=64" width="64" height="64" alt="Daryl Walleck" /></a>
-<a href="https://github.com/dwu96" title="Di Wu"><img src="https://github.com/dwu96.png?size=64" width="64" height="64" alt="Di Wu" /></a>
-<a href="https://github.com/dwzhangx" title="dwzhangx"><img src="https://github.com/dwzhangx.png?size=64" width="64" height="64" alt="dwzhangx" /></a>
-<a href="https://github.com/dylanl321" title="Dylan Lewis"><img src="https://github.com/dylanl321.png?size=64" width="64" height="64" alt="Dylan Lewis" /></a>
-<a href="https://github.com/eajajhossain" title="Eajaj Hossain"><img src="https://github.com/eajajhossain.png?size=64" width="64" height="64" alt="Eajaj Hossain" /></a>
-<a href="https://github.com/easyshot" title="D"><img src="https://github.com/easyshot.png?size=64" width="64" height="64" alt="D" /></a>
-<a href="https://github.com/echorubisco" title="echorubisco"><img src="https://github.com/echorubisco.png?size=64" width="64" height="64" alt="echorubisco" /></a>
-<a href="https://github.com/EduVencovsky" title="Eduardo Vencovsky"><img src="https://github.com/EduVencovsky.png?size=64" width="64" height="64" alt="Eduardo Vencovsky" /></a>
-<a href="https://github.com/ekson73" title="Emilson Moraes"><img src="https://github.com/ekson73.png?size=64" width="64" height="64" alt="Emilson Moraes" /></a>
-<a href="https://github.com/el-pedrito" title="Pierre"><img src="https://github.com/el-pedrito.png?size=64" width="64" height="64" alt="Pierre" /></a>
-<a href="https://github.com/EllaRed" title="Emmanuella Dasilva-Domingos"><img src="https://github.com/EllaRed.png?size=64" width="64" height="64" alt="Emmanuella Dasilva-Domingos" /></a>
-<a href="https://github.com/EllianCarlos" title="Ellian Carlos"><img src="https://github.com/EllianCarlos.png?size=64" width="64" height="64" alt="Ellian Carlos" /></a>
-<a href="https://github.com/elphastori" title="Elphas Toringepi"><img src="https://github.com/elphastori.png?size=64" width="64" height="64" alt="Elphas Toringepi" /></a>
-<a href="https://github.com/em-sec" title="Eric M"><img src="https://github.com/em-sec.png?size=64" width="64" height="64" alt="Eric M" /></a>
-<a href="https://github.com/eneault" title="Eric Neault"><img src="https://github.com/eneault.png?size=64" width="64" height="64" alt="Eric Neault" /></a>
-<a href="https://github.com/Eng-Ahmd" title="Ahmed Hassanin"><img src="https://github.com/Eng-Ahmd.png?size=64" width="64" height="64" alt="Ahmed Hassanin" /></a>
-<a href="https://github.com/envyN" title="Naveen Adarsh"><img src="https://github.com/envyN.png?size=64" width="64" height="64" alt="Naveen Adarsh" /></a>
-<a href="https://github.com/erichays" title="Eric Hays"><img src="https://github.com/erichays.png?size=64" width="64" height="64" alt="Eric Hays" /></a>
-<a href="https://github.com/erikbomb" title="Erik Schweiss"><img src="https://github.com/erikbomb.png?size=64" width="64" height="64" alt="Erik Schweiss" /></a>
-<a href="https://github.com/estenger" title="Evan Stenger"><img src="https://github.com/estenger.png?size=64" width="64" height="64" alt="Evan Stenger" /></a>
-<a href="https://github.com/estesp" title="Phil Estes"><img src="https://github.com/estesp.png?size=64" width="64" height="64" alt="Phil Estes" /></a>
-<a href="https://github.com/ethanlevine" title="ethanlevine"><img src="https://github.com/ethanlevine.png?size=64" width="64" height="64" alt="ethanlevine" /></a>
-<a href="https://github.com/etoscano" title="Eleonora Toscano"><img src="https://github.com/etoscano.png?size=64" width="64" height="64" alt="Eleonora Toscano" /></a>
-<a href="https://github.com/evajcwork-max" title="evajcwork-max"><img src="https://github.com/evajcwork-max.png?size=64" width="64" height="64" alt="evajcwork-max" /></a>
-<a href="https://github.com/EzzatQ" title="Ezzat Qupty"><img src="https://github.com/EzzatQ.png?size=64" width="64" height="64" alt="Ezzat Qupty" /></a>
-<a href="https://github.com/fanhongy" title="Stan Fan"><img src="https://github.com/fanhongy.png?size=64" width="64" height="64" alt="Stan Fan" /></a>
-<a href="https://github.com/fatihcaliss" title="Fatih Çalış"><img src="https://github.com/fatihcaliss.png?size=64" width="64" height="64" alt="Fatih Çalış" /></a>
-<a href="https://github.com/felipeb" title="Felipe"><img src="https://github.com/felipeb.png?size=64" width="64" height="64" alt="Felipe" /></a>
-<a href="https://github.com/FelixWang1994" title="Kejian Wang"><img src="https://github.com/FelixWang1994.png?size=64" width="64" height="64" alt="Kejian Wang" /></a>
-<a href="https://github.com/fenjen" title="fenjen"><img src="https://github.com/fenjen.png?size=64" width="64" height="64" alt="fenjen" /></a>
-<a href="https://github.com/filipgodina" title="filipgodina"><img src="https://github.com/filipgodina.png?size=64" width="64" height="64" alt="filipgodina" /></a>
-<a href="https://github.com/finnhad" title="Finn H"><img src="https://github.com/finnhad.png?size=64" width="64" height="64" alt="Finn H" /></a>
-<a href="https://github.com/FlameFrost" title="FlameFrost"><img src="https://github.com/FlameFrost.png?size=64" width="64" height="64" alt="FlameFrost" /></a>
-<a href="https://github.com/FlowTable0" title="FlowTable0"><img src="https://github.com/FlowTable0.png?size=64" width="64" height="64" alt="FlowTable0" /></a>
-<a href="https://github.com/floze-the-genius" title="Floze"><img src="https://github.com/floze-the-genius.png?size=64" width="64" height="64" alt="Floze" /></a>
-<a href="https://github.com/flukschander" title="Florian Lukschander"><img src="https://github.com/flukschander.png?size=64" width="64" height="64" alt="Florian Lukschander" /></a>
-<a href="https://github.com/fo2rist" title="Dmitry Sitnikov"><img src="https://github.com/fo2rist.png?size=64" width="64" height="64" alt="Dmitry Sitnikov" /></a>
-<a href="https://github.com/forkercat" title="Junhao Wang"><img src="https://github.com/forkercat.png?size=64" width="64" height="64" alt="Junhao Wang" /></a>
-<a href="https://github.com/frankkuosh-bit" title="frankkuosh-bit"><img src="https://github.com/frankkuosh-bit.png?size=64" width="64" height="64" alt="frankkuosh-bit" /></a>
-<a href="https://github.com/Frxnesvo" title="Francesco Gallo"><img src="https://github.com/Frxnesvo.png?size=64" width="64" height="64" alt="Francesco Gallo" /></a>
-<a href="https://github.com/fsiegwald" title="François Siegwald"><img src="https://github.com/fsiegwald.png?size=64" width="64" height="64" alt="François Siegwald" /></a>
-<a href="https://github.com/gabrielmateitoma" title="gabrielmateitoma"><img src="https://github.com/gabrielmateitoma.png?size=64" width="64" height="64" alt="gabrielmateitoma" /></a>
-<a href="https://github.com/Garnethil" title="Gabriel Sanchez"><img src="https://github.com/Garnethil.png?size=64" width="64" height="64" alt="Gabriel Sanchez" /></a>
-<a href="https://github.com/gbrunoo" title="Gabriel"><img src="https://github.com/gbrunoo.png?size=64" width="64" height="64" alt="Gabriel" /></a>
-<a href="https://github.com/geetsawhney" title="geet sawhney"><img src="https://github.com/geetsawhney.png?size=64" width="64" height="64" alt="geet sawhney" /></a>
-<a href="https://github.com/geraldvienna" title="Gerald"><img src="https://github.com/geraldvienna.png?size=64" width="64" height="64" alt="Gerald" /></a>
-<a href="https://github.com/giridhar-shyam" title="Giridhar Shyam"><img src="https://github.com/giridhar-shyam.png?size=64" width="64" height="64" alt="Giridhar Shyam" /></a>
-<a href="https://github.com/gmealy1" title="Gavin Mealy"><img src="https://github.com/gmealy1.png?size=64" width="64" height="64" alt="Gavin Mealy" /></a>
-<a href="https://github.com/Godivamasterpiece" title="Vivek Teja Sayyaparaju"><img src="https://github.com/Godivamasterpiece.png?size=64" width="64" height="64" alt="Vivek Teja Sayyaparaju" /></a> <!-- wokeignore:rule=master -->
-<a href="https://github.com/GouthamHM" title="Goutham"><img src="https://github.com/GouthamHM.png?size=64" width="64" height="64" alt="Goutham" /></a>
-<a href="https://github.com/GoZippy" title="GoZippy"><img src="https://github.com/GoZippy.png?size=64" width="64" height="64" alt="GoZippy" /></a>
-<a href="https://github.com/gragollier" title="Grant Gollier"><img src="https://github.com/gragollier.png?size=64" width="64" height="64" alt="Grant Gollier" /></a>
-<a href="https://github.com/greatfighter" title="Spencer"><img src="https://github.com/greatfighter.png?size=64" width="64" height="64" alt="Spencer" /></a>
-<a href="https://github.com/gregory-chapman" title="Gregory Chapman"><img src="https://github.com/gregory-chapman.png?size=64" width="64" height="64" alt="Gregory Chapman" /></a>
-<a href="https://github.com/greysonevins" title="Greyson Nevins"><img src="https://github.com/greysonevins.png?size=64" width="64" height="64" alt="Greyson Nevins" /></a>
-<a href="https://github.com/gspivey" title="Gerard Spivey"><img src="https://github.com/gspivey.png?size=64" width="64" height="64" alt="Gerard Spivey" /></a>
-<a href="https://github.com/hanyun2019" title="Haowen Huang"><img src="https://github.com/hanyun2019.png?size=64" width="64" height="64" alt="Haowen Huang" /></a>
-<a href="https://github.com/haozihong" title="haozihong"><img src="https://github.com/haozihong.png?size=64" width="64" height="64" alt="haozihong" /></a>
-<a href="https://github.com/hardjaso" title="Jason Harding"><img src="https://github.com/hardjaso.png?size=64" width="64" height="64" alt="Jason Harding" /></a>
-<a href="https://github.com/harking" title="George Montana Harkin"><img src="https://github.com/harking.png?size=64" width="64" height="64" alt="George Montana Harkin" /></a>
-<a href="https://github.com/harpreetmultani1994" title="Harpreet Singh"><img src="https://github.com/harpreetmultani1994.png?size=64" width="64" height="64" alt="Harpreet Singh" /></a>
-<a href="https://github.com/hazlijohar95" title="Hazli Johar"><img src="https://github.com/hazlijohar95.png?size=64" width="64" height="64" alt="Hazli Johar" /></a>
-<a href="https://github.com/hchy0422" title="Kathy Han"><img src="https://github.com/hchy0422.png?size=64" width="64" height="64" alt="Kathy Han" /></a>
-<a href="https://github.com/hegxiten" title="Zezhou Wang"><img src="https://github.com/hegxiten.png?size=64" width="64" height="64" alt="Zezhou Wang" /></a>
-<a href="https://github.com/helenastafford" title="helenastafford"><img src="https://github.com/helenastafford.png?size=64" width="64" height="64" alt="helenastafford" /></a>
-<a href="https://github.com/helvinho" title="helvinho"><img src="https://github.com/helvinho.png?size=64" width="64" height="64" alt="helvinho" /></a>
-<a href="https://github.com/Hemphill39" title="Eric Hemphill"><img src="https://github.com/Hemphill39.png?size=64" width="64" height="64" alt="Eric Hemphill" /></a>
-<a href="https://github.com/HermiteBai" title="Hermite Bai"><img src="https://github.com/HermiteBai.png?size=64" width="64" height="64" alt="Hermite Bai" /></a>
-<a href="https://github.com/hhllii" title="hhllii"><img src="https://github.com/hhllii.png?size=64" width="64" height="64" alt="hhllii" /></a>
-<a href="https://github.com/hilljm-418" title="hilljm-418"><img src="https://github.com/hilljm-418.png?size=64" width="64" height="64" alt="hilljm-418" /></a>
-<a href="https://github.com/hlbence" title="hlbence"><img src="https://github.com/hlbence.png?size=64" width="64" height="64" alt="hlbence" /></a>
-<a href="https://github.com/hoang-phan98" title="Hoang "><img src="https://github.com/hoang-phan98.png?size=64" width="64" height="64" alt="Hoang " /></a>
-<a href="https://github.com/hoegertn" title="Thorsten Hoeger"><img src="https://github.com/hoegertn.png?size=64" width="64" height="64" alt="Thorsten Hoeger" /></a>
-<a href="https://github.com/hskiba" title="Henry Skiba"><img src="https://github.com/hskiba.png?size=64" width="64" height="64" alt="Henry Skiba" /></a>
-<a href="https://github.com/huanghang111" title="Zihang Huang"><img src="https://github.com/huanghang111.png?size=64" width="64" height="64" alt="Zihang Huang" /></a>
-<a href="https://github.com/hugoncosta" title="Hugo Costa"><img src="https://github.com/hugoncosta.png?size=64" width="64" height="64" alt="Hugo Costa" /></a>
-<a href="https://github.com/hungtnvu" title="Hung Vu"><img src="https://github.com/hungtnvu.png?size=64" width="64" height="64" alt="Hung Vu" /></a>
-<a href="https://github.com/iamwhatever" title="Zejiang Guo (Joe)"><img src="https://github.com/iamwhatever.png?size=64" width="64" height="64" alt="Zejiang Guo (Joe)" /></a>
-<a href="https://github.com/icyasblue" title="Angelo Yu"><img src="https://github.com/icyasblue.png?size=64" width="64" height="64" alt="Angelo Yu" /></a>
-<a href="https://github.com/inaoy" title="inaoy"><img src="https://github.com/inaoy.png?size=64" width="64" height="64" alt="inaoy" /></a>
-<a href="https://github.com/IngridMorstrad" title="IngridMorstrad"><img src="https://github.com/IngridMorstrad.png?size=64" width="64" height="64" alt="IngridMorstrad" /></a>
-<a href="https://github.com/ishansmishra" title="Ishan Mishra"><img src="https://github.com/ishansmishra.png?size=64" width="64" height="64" alt="Ishan Mishra" /></a>
-<a href="https://github.com/IskanderNovena" title="Sebastiaan Brozius"><img src="https://github.com/IskanderNovena.png?size=64" width="64" height="64" alt="Sebastiaan Brozius" /></a>
-<a href="https://github.com/isotope14" title="isotope14"><img src="https://github.com/isotope14.png?size=64" width="64" height="64" alt="isotope14" /></a>
-<a href="https://github.com/izikovic" title="Ivan Žiković"><img src="https://github.com/izikovic.png?size=64" width="64" height="64" alt="Ivan Žiković" /></a>
-<a href="https://github.com/j20120307" title="j20120307"><img src="https://github.com/j20120307.png?size=64" width="64" height="64" alt="j20120307" /></a>
-<a href="https://github.com/JainSid96" title="Siddhant Jain"><img src="https://github.com/JainSid96.png?size=64" width="64" height="64" alt="Siddhant Jain" /></a>
-<a href="https://github.com/jakeg0615" title="jakeg0615"><img src="https://github.com/jakeg0615.png?size=64" width="64" height="64" alt="jakeg0615" /></a>
-<a href="https://github.com/jakeinater" title="Jake Zhao"><img src="https://github.com/jakeinater.png?size=64" width="64" height="64" alt="Jake Zhao" /></a>
-<a href="https://github.com/jakenoc" title="Jacob Nocentino"><img src="https://github.com/jakenoc.png?size=64" width="64" height="64" alt="Jacob Nocentino" /></a>
-<a href="https://github.com/janvoll" title="janvoll"><img src="https://github.com/janvoll.png?size=64" width="64" height="64" alt="janvoll" /></a>
-<a href="https://github.com/JasonZhang1993" title="Jason Zhang's Git"><img src="https://github.com/JasonZhang1993.png?size=64" width="64" height="64" alt="Jason Zhang's Git" /></a>
-<a href="https://github.com/javenciu" title="javenciu"><img src="https://github.com/javenciu.png?size=64" width="64" height="64" alt="javenciu" /></a>
-<a href="https://github.com/jayaprakashreddy007" title="jayaprakashreddy007"><img src="https://github.com/jayaprakashreddy007.png?size=64" width="64" height="64" alt="jayaprakashreddy007" /></a>
-<a href="https://github.com/jaydedm" title="Jayde Mitchell"><img src="https://github.com/jaydedm.png?size=64" width="64" height="64" alt="Jayde Mitchell" /></a>
-<a href="https://github.com/jaysonsantos" title="Jayson Reis"><img src="https://github.com/jaysonsantos.png?size=64" width="64" height="64" alt="Jayson Reis" /></a>
-<a href="https://github.com/jbandon" title="Jack Bandon"><img src="https://github.com/jbandon.png?size=64" width="64" height="64" alt="Jack Bandon" /></a>
-<a href="https://github.com/jbnunn" title="Jeff Nunn"><img src="https://github.com/jbnunn.png?size=64" width="64" height="64" alt="Jeff Nunn" /></a>
-<a href="https://github.com/jdrahoz" title="Julia Drahozal"><img src="https://github.com/jdrahoz.png?size=64" width="64" height="64" alt="Julia Drahozal" /></a>
-<a href="https://github.com/jeeshofone" title="Will Laws"><img src="https://github.com/jeeshofone.png?size=64" width="64" height="64" alt="Will Laws" /></a>
-<a href="https://github.com/jeffn12" title="Jeff Neuberger"><img src="https://github.com/jeffn12.png?size=64" width="64" height="64" alt="Jeff Neuberger" /></a>
-<a href="https://github.com/jfnlewis-aws" title="Jeffrey Lewis"><img src="https://github.com/jfnlewis-aws.png?size=64" width="64" height="64" alt="Jeffrey Lewis" /></a>
-<a href="https://github.com/jgericke" title="Julian Gericke"><img src="https://github.com/jgericke.png?size=64" width="64" height="64" alt="Julian Gericke" /></a>
-<a href="https://github.com/JiaDe-Wu" title="JiaDe WU"><img src="https://github.com/JiaDe-Wu.png?size=64" width="64" height="64" alt="JiaDe WU" /></a>
-<a href="https://github.com/jianwenl" title="jianwenl"><img src="https://github.com/jianwenl.png?size=64" width="64" height="64" alt="jianwenl" /></a>
-<a href="https://github.com/Jim-Kincaid-CSTG" title="Jim Kincaid"><img src="https://github.com/Jim-Kincaid-CSTG.png?size=64" width="64" height="64" alt="Jim Kincaid" /></a>
-<a href="https://github.com/jingchaodev" title="chao"><img src="https://github.com/jingchaodev.png?size=64" width="64" height="64" alt="chao" /></a>
-<a href="https://github.com/jjrawlins" title="Jayson Rawlins"><img src="https://github.com/jjrawlins.png?size=64" width="64" height="64" alt="Jayson Rawlins" /></a>
-<a href="https://github.com/jkasiraj" title="jkasiraj"><img src="https://github.com/jkasiraj.png?size=64" width="64" height="64" alt="jkasiraj" /></a>
-<a href="https://github.com/jkiepert" title="jkiepert"><img src="https://github.com/jkiepert.png?size=64" width="64" height="64" alt="jkiepert" /></a>
-<a href="https://github.com/jmonagas-mwb" title="Jose T. Monagas"><img src="https://github.com/jmonagas-mwb.png?size=64" width="64" height="64" alt="Jose T. Monagas" /></a>
-<a href="https://github.com/joaogac" title="Joao Guilherme Almeida Cesar"><img src="https://github.com/joaogac.png?size=64" width="64" height="64" alt="Joao Guilherme Almeida Cesar" /></a>
-<a href="https://github.com/jodoyodo" title="David Qian"><img src="https://github.com/jodoyodo.png?size=64" width="64" height="64" alt="David Qian" /></a>
-<a href="https://github.com/JoernZheng" title="Yaowen Zheng"><img src="https://github.com/JoernZheng.png?size=64" width="64" height="64" alt="Yaowen Zheng" /></a>
-<a href="https://github.com/johann-sew" title="johann-sew"><img src="https://github.com/johann-sew.png?size=64" width="64" height="64" alt="johann-sew" /></a>
-<a href="https://github.com/JohnCrickett" title="John Crickett"><img src="https://github.com/JohnCrickett.png?size=64" width="64" height="64" alt="John Crickett" /></a>
-<a href="https://github.com/JohnEspenhahn" title="John Espenhahn"><img src="https://github.com/JohnEspenhahn.png?size=64" width="64" height="64" alt="John Espenhahn" /></a>
-<a href="https://github.com/johnnymastin" title="Johnny Mastin"><img src="https://github.com/johnnymastin.png?size=64" width="64" height="64" alt="Johnny Mastin" /></a>
-<a href="https://github.com/johnnynaught" title="johnnynaught"><img src="https://github.com/johnnynaught.png?size=64" width="64" height="64" alt="johnnynaught" /></a>
-<a href="https://github.com/jongaffen" title="jongaffen"><img src="https://github.com/jongaffen.png?size=64" width="64" height="64" alt="jongaffen" /></a>
-<a href="https://github.com/jorgerubio-tech" title="jorgerubio-tech"><img src="https://github.com/jorgerubio-tech.png?size=64" width="64" height="64" alt="jorgerubio-tech" /></a>
-<a href="https://github.com/Jos-HJD" title="joseph hu"><img src="https://github.com/Jos-HJD.png?size=64" width="64" height="64" alt="joseph hu" /></a>
-<a href="https://github.com/josej4m" title="James Joseph"><img src="https://github.com/josej4m.png?size=64" width="64" height="64" alt="James Joseph" /></a>
-<a href="https://github.com/josephcoombe" title="Joseph Coombe"><img src="https://github.com/josephcoombe.png?size=64" width="64" height="64" alt="Joseph Coombe" /></a>
-<a href="https://github.com/joshymle" title="Joshua Yeung"><img src="https://github.com/joshymle.png?size=64" width="64" height="64" alt="Joshua Yeung" /></a>
-<a href="https://github.com/joyboy5477" title="Akash Vishwakarma"><img src="https://github.com/joyboy5477.png?size=64" width="64" height="64" alt="Akash Vishwakarma" /></a>
-<a href="https://github.com/JPLachance" title="Jean-Philippe Lachance"><img src="https://github.com/JPLachance.png?size=64" width="64" height="64" alt="Jean-Philippe Lachance" /></a>
-<a href="https://github.com/Jpontone" title="JPontone"><img src="https://github.com/Jpontone.png?size=64" width="64" height="64" alt="JPontone" /></a>
-<a href="https://github.com/jrha2" title="jrha2"><img src="https://github.com/jrha2.png?size=64" width="64" height="64" alt="jrha2" /></a>
-<a href="https://github.com/jtoloui" title="Jamie Toloui"><img src="https://github.com/jtoloui.png?size=64" width="64" height="64" alt="Jamie Toloui" /></a>
-<a href="https://github.com/junjiequ" title="JJ_Q"><img src="https://github.com/junjiequ.png?size=64" width="64" height="64" alt="JJ_Q" /></a>
-<a href="https://github.com/junoha" title="Jun Ohashi"><img src="https://github.com/junoha.png?size=64" width="64" height="64" alt="Jun Ohashi" /></a>
-<a href="https://github.com/Jus973" title="Justin Z"><img src="https://github.com/Jus973.png?size=64" width="64" height="64" alt="Justin Z" /></a>
-<a href="https://github.com/jwoehrle" title="jwoehrle"><img src="https://github.com/jwoehrle.png?size=64" width="64" height="64" alt="jwoehrle" /></a>
-<a href="https://github.com/JWThewes" title="Jan Thewes"><img src="https://github.com/JWThewes.png?size=64" width="64" height="64" alt="Jan Thewes" /></a>
-<a href="https://github.com/jyuros" title="Jaden Yuros"><img src="https://github.com/jyuros.png?size=64" width="64" height="64" alt="Jaden Yuros" /></a>
-<a href="https://github.com/k33bz" title="Matthew Kastro"><img src="https://github.com/k33bz.png?size=64" width="64" height="64" alt="Matthew Kastro" /></a>
-<a href="https://github.com/KaiqueGovani" title="Kaique Govani"><img src="https://github.com/KaiqueGovani.png?size=64" width="64" height="64" alt="Kaique Govani" /></a>
-<a href="https://github.com/kaizawa97" title="Kai Mitsuzawa"><img src="https://github.com/kaizawa97.png?size=64" width="64" height="64" alt="Kai Mitsuzawa" /></a>
-<a href="https://github.com/KarlLeen" title="karl4c"><img src="https://github.com/KarlLeen.png?size=64" width="64" height="64" alt="karl4c" /></a>
-<a href="https://github.com/karraghu" title="karraghu"><img src="https://github.com/karraghu.png?size=64" width="64" height="64" alt="karraghu" /></a>
-<a href="https://github.com/kawaji" title="kawaji"><img src="https://github.com/kawaji.png?size=64" width="64" height="64" alt="kawaji" /></a>
-<a href="https://github.com/kazimovzaman2" title="Zaman Kazimov"><img src="https://github.com/kazimovzaman2.png?size=64" width="64" height="64" alt="Zaman Kazimov" /></a>
-<a href="https://github.com/kesh97-hub" title="kesh97-hub"><img src="https://github.com/kesh97-hub.png?size=64" width="64" height="64" alt="kesh97-hub" /></a>
-<a href="https://github.com/keyejia" title="Kellen Jia"><img src="https://github.com/keyejia.png?size=64" width="64" height="64" alt="Kellen Jia" /></a>
-<a href="https://github.com/kian-zh" title="张景源"><img src="https://github.com/kian-zh.png?size=64" width="64" height="64" alt="张景源" /></a>
-<a href="https://github.com/kiavashsamadi" title="Kiavash"><img src="https://github.com/kiavashsamadi.png?size=64" width="64" height="64" alt="Kiavash" /></a>
-<a href="https://github.com/kirankumar15" title="kirankumar"><img src="https://github.com/kirankumar15.png?size=64" width="64" height="64" alt="kirankumar" /></a>
-<a href="https://github.com/kishoreb95" title="Kishore Baskar"><img src="https://github.com/kishoreb95.png?size=64" width="64" height="64" alt="Kishore Baskar" /></a>
-<a href="https://github.com/Kive1ru" title="Jiahao Guo"><img src="https://github.com/Kive1ru.png?size=64" width="64" height="64" alt="Jiahao Guo" /></a>
-<a href="https://github.com/kondisettyravi" title="Ravi Teja Kondisetty"><img src="https://github.com/kondisettyravi.png?size=64" width="64" height="64" alt="Ravi Teja Kondisetty" /></a>
-<a href="https://github.com/konippi" title="Kyosuke Konishi"><img src="https://github.com/konippi.png?size=64" width="64" height="64" alt="Kyosuke Konishi" /></a>
-<a href="https://github.com/kotyara1005" title="Artem Krivonos"><img src="https://github.com/kotyara1005.png?size=64" width="64" height="64" alt="Artem Krivonos" /></a>
-<a href="https://github.com/koushal2018" title="Koushal"><img src="https://github.com/koushal2018.png?size=64" width="64" height="64" alt="Koushal" /></a>
-<a href="https://github.com/koushikginjupally" title="koushikginjupally"><img src="https://github.com/koushikginjupally.png?size=64" width="64" height="64" alt="koushikginjupally" /></a>
-<a href="https://github.com/krishdhasmana" title="Krish Dhasmana"><img src="https://github.com/krishdhasmana.png?size=64" width="64" height="64" alt="Krish Dhasmana" /></a>
-<a href="https://github.com/krunalpa-amzn" title="krunalpa-amzn"><img src="https://github.com/krunalpa-amzn.png?size=64" width="64" height="64" alt="krunalpa-amzn" /></a>
-<a href="https://github.com/ksarieddine" title="ksarieddine"><img src="https://github.com/ksarieddine.png?size=64" width="64" height="64" alt="ksarieddine" /></a>
-<a href="https://github.com/ktreharrison" title="Ken Harrison"><img src="https://github.com/ktreharrison.png?size=64" width="64" height="64" alt="Ken Harrison" /></a>
-<a href="https://github.com/kumardushyant" title="Dushyant Kumar"><img src="https://github.com/kumardushyant.png?size=64" width="64" height="64" alt="Dushyant Kumar" /></a>
-<a href="https://github.com/kvzz42" title="KV.ZZ"><img src="https://github.com/kvzz42.png?size=64" width="64" height="64" alt="KV.ZZ" /></a>
-<a href="https://github.com/Kyle-Helmick" title="Kyle Helmick"><img src="https://github.com/Kyle-Helmick.png?size=64" width="64" height="64" alt="Kyle Helmick" /></a>
-<a href="https://github.com/kyleseaman" title="Kyle Seaman"><img src="https://github.com/kyleseaman.png?size=64" width="64" height="64" alt="Kyle Seaman" /></a>
-<a href="https://github.com/Kyngo" title="Arnau Martín"><img src="https://github.com/Kyngo.png?size=64" width="64" height="64" alt="Arnau Martín" /></a>
-<a href="https://github.com/LachlanLindsay" title="Lachlan Lindsay"><img src="https://github.com/LachlanLindsay.png?size=64" width="64" height="64" alt="Lachlan Lindsay" /></a>
-<a href="https://github.com/lagrider" title="Bojin Li"><img src="https://github.com/lagrider.png?size=64" width="64" height="64" alt="Bojin Li" /></a>
-<a href="https://github.com/LandonCoe" title="LandonCoe"><img src="https://github.com/LandonCoe.png?size=64" width="64" height="64" alt="LandonCoe" /></a>
-<a href="https://github.com/lcplcy" title="Lho Chen Yang"><img src="https://github.com/lcplcy.png?size=64" width="64" height="64" alt="Lho Chen Yang" /></a>
-<a href="https://github.com/leeclarkuk" title="Lee Clark"><img src="https://github.com/leeclarkuk.png?size=64" width="64" height="64" alt="Lee Clark" /></a>
-<a href="https://github.com/leon-barsamian" title="leon-barsamian"><img src="https://github.com/leon-barsamian.png?size=64" width="64" height="64" alt="leon-barsamian" /></a>
-<a href="https://github.com/LeonardALQ" title="Leonard"><img src="https://github.com/LeonardALQ.png?size=64" width="64" height="64" alt="Leonard" /></a>
-<a href="https://github.com/leonlaiyc" title="Leon"><img src="https://github.com/leonlaiyc.png?size=64" width="64" height="64" alt="Leon" /></a>
-<a href="https://github.com/leozhad" title="Leo Zhadanovsky"><img src="https://github.com/leozhad.png?size=64" width="64" height="64" alt="Leo Zhadanovsky" /></a>
-<a href="https://github.com/lester-gh" title="lester-gh"><img src="https://github.com/lester-gh.png?size=64" width="64" height="64" alt="lester-gh" /></a>
-<a href="https://github.com/LeTeutz" title="Teodor Oprescu"><img src="https://github.com/LeTeutz.png?size=64" width="64" height="64" alt="Teodor Oprescu" /></a>
-<a href="https://github.com/Liam-Wirth" title="Liam Wirth"><img src="https://github.com/Liam-Wirth.png?size=64" width="64" height="64" alt="Liam Wirth" /></a>
-<a href="https://github.com/LiptonJumboTeaBag" title="John Li"><img src="https://github.com/LiptonJumboTeaBag.png?size=64" width="64" height="64" alt="John Li" /></a>
-<a href="https://github.com/ljsimpkin" title="Liam"><img src="https://github.com/ljsimpkin.png?size=64" width="64" height="64" alt="Liam" /></a>
-<a href="https://github.com/lmambr2" title="lmambr2"><img src="https://github.com/lmambr2.png?size=64" width="64" height="64" alt="lmambr2" /></a>
-<a href="https://github.com/lmchung" title="Lindsay Chung"><img src="https://github.com/lmchung.png?size=64" width="64" height="64" alt="Lindsay Chung" /></a>
-<a href="https://github.com/Lock128" title="Johannes Koch"><img src="https://github.com/Lock128.png?size=64" width="64" height="64" alt="Johannes Koch" /></a>
-<a href="https://github.com/logesh4v" title="LOGESH S"><img src="https://github.com/logesh4v.png?size=64" width="64" height="64" alt="LOGESH S" /></a>
-<a href="https://github.com/louis-bompart" title="Louis Bompart"><img src="https://github.com/louis-bompart.png?size=64" width="64" height="64" alt="Louis Bompart" /></a>
-<a href="https://github.com/LucaButBoring" title="Luca Chang"><img src="https://github.com/LucaButBoring.png?size=64" width="64" height="64" alt="Luca Chang" /></a>
-<a href="https://github.com/lucasmokwa" title="Lucas Ravanello Mokwa"><img src="https://github.com/lucasmokwa.png?size=64" width="64" height="64" alt="Lucas Ravanello Mokwa" /></a>
-<a href="https://github.com/Luccas-carvalho" title="Luccas Carvalho"><img src="https://github.com/Luccas-carvalho.png?size=64" width="64" height="64" alt="Luccas Carvalho" /></a>
-<a href="https://github.com/LuisBrel" title="LuisBrel"><img src="https://github.com/LuisBrel.png?size=64" width="64" height="64" alt="LuisBrel" /></a>
-<a href="https://github.com/luisgabriel" title="Luís Gabriel Lima"><img src="https://github.com/luisgabriel.png?size=64" width="64" height="64" alt="Luís Gabriel Lima" /></a>
-<a href="https://github.com/lukehjung" title="Luke Jung"><img src="https://github.com/lukehjung.png?size=64" width="64" height="64" alt="Luke Jung" /></a>
-<a href="https://github.com/Lunchb0ne" title="Abhishek Aryan"><img src="https://github.com/Lunchb0ne.png?size=64" width="64" height="64" alt="Abhishek Aryan" /></a>
-<a href="https://github.com/luokaiwei" title="Kaiwei Luo"><img src="https://github.com/luokaiwei.png?size=64" width="64" height="64" alt="Kaiwei Luo" /></a>
-<a href="https://github.com/luudtran" title="luudtran"><img src="https://github.com/luudtran.png?size=64" width="64" height="64" alt="luudtran" /></a>
-<a href="https://github.com/lzyraining" title="Zhuoyu Li"><img src="https://github.com/lzyraining.png?size=64" width="64" height="64" alt="Zhuoyu Li" /></a>
-<a href="https://github.com/m2kinare" title="m2kinare"><img src="https://github.com/m2kinare.png?size=64" width="64" height="64" alt="m2kinare" /></a>
-<a href="https://github.com/MacintoshPlus89" title="MacintoshPlus89"><img src="https://github.com/MacintoshPlus89.png?size=64" width="64" height="64" alt="MacintoshPlus89" /></a>
-<a href="https://github.com/maitianqcc" title="maitianqcc"><img src="https://github.com/maitianqcc.png?size=64" width="64" height="64" alt="maitianqcc" /></a>
-<a href="https://github.com/mamaiti" title="mamaiti"><img src="https://github.com/mamaiti.png?size=64" width="64" height="64" alt="mamaiti" /></a>
-<a href="https://github.com/mannitrkl2006" title="manish.gupta"><img src="https://github.com/mannitrkl2006.png?size=64" width="64" height="64" alt="manish.gupta" /></a>
-<a href="https://github.com/ManoharSwamynathan" title="Manohar Swamynathan"><img src="https://github.com/ManoharSwamynathan.png?size=64" width="64" height="64" alt="Manohar Swamynathan" /></a>
-<a href="https://github.com/marcschuricht" title="Marc Schuricht"><img src="https://github.com/marcschuricht.png?size=64" width="64" height="64" alt="Marc Schuricht" /></a>
-<a href="https://github.com/mariamalaidi" title="mariamalaidi"><img src="https://github.com/mariamalaidi.png?size=64" width="64" height="64" alt="mariamalaidi" /></a>
-<a href="https://github.com/martchellop" title="Marcello Pagano"><img src="https://github.com/martchellop.png?size=64" width="64" height="64" alt="Marcello Pagano" /></a>
-<a href="https://github.com/MarvellousCodes" title="Marvellous Adedapo"><img src="https://github.com/MarvellousCodes.png?size=64" width="64" height="64" alt="Marvellous Adedapo" /></a>
-<a href="https://github.com/masterkoppa" title="Andres Ruiz"><img src="https://github.com/masterkoppa.png?size=64" width="64" height="64" alt="Andres Ruiz" /></a> <!-- wokeignore:rule=master -->
-<a href="https://github.com/mathisen99" title="Tommy Mathisen"><img src="https://github.com/mathisen99.png?size=64" width="64" height="64" alt="Tommy Mathisen" /></a>
-<a href="https://github.com/matt-emara" title="mattemara"><img src="https://github.com/matt-emara.png?size=64" width="64" height="64" alt="mattemara" /></a>
-<a href="https://github.com/matt-kg" title="matt-kg"><img src="https://github.com/matt-kg.png?size=64" width="64" height="64" alt="matt-kg" /></a>
-<a href="https://github.com/MattMCloudy" title="Matthew McLeod"><img src="https://github.com/MattMCloudy.png?size=64" width="64" height="64" alt="Matthew McLeod" /></a>
-<a href="https://github.com/maufee" title="maufee"><img src="https://github.com/maufee.png?size=64" width="64" height="64" alt="maufee" /></a>
-<a href="https://github.com/max2me" title="Maxim Soloviev"><img src="https://github.com/max2me.png?size=64" width="64" height="64" alt="Maxim Soloviev" /></a>
-<a href="https://github.com/mbajaj92" title="Madhur Bajaj"><img src="https://github.com/mbajaj92.png?size=64" width="64" height="64" alt="Madhur Bajaj" /></a>
-<a href="https://github.com/mbriones98" title="Matthew Briones"><img src="https://github.com/mbriones98.png?size=64" width="64" height="64" alt="Matthew Briones" /></a>
-<a href="https://github.com/mchaloupka" title="Milos Chaloupka"><img src="https://github.com/mchaloupka.png?size=64" width="64" height="64" alt="Milos Chaloupka" /></a>
-<a href="https://github.com/mclawben" title="mclawben"><img src="https://github.com/mclawben.png?size=64" width="64" height="64" alt="mclawben" /></a>
-<a href="https://github.com/mcmathews" title="Michael Mathews"><img src="https://github.com/mcmathews.png?size=64" width="64" height="64" alt="Michael Mathews" /></a>
-<a href="https://github.com/mcryan77" title="mcryan"><img src="https://github.com/mcryan77.png?size=64" width="64" height="64" alt="mcryan" /></a>
-<a href="https://github.com/md-abusayeed" title="Md Abu Sayeed"><img src="https://github.com/md-abusayeed.png?size=64" width="64" height="64" alt="Md Abu Sayeed" /></a>
-<a href="https://github.com/Mdkar" title="Mihir Dhamankar"><img src="https://github.com/Mdkar.png?size=64" width="64" height="64" alt="Mihir Dhamankar" /></a>
-<a href="https://github.com/mdwyer223" title="Matthew Dwyer"><img src="https://github.com/mdwyer223.png?size=64" width="64" height="64" alt="Matthew Dwyer" /></a>
-<a href="https://github.com/miamanav" title="miamanav"><img src="https://github.com/miamanav.png?size=64" width="64" height="64" alt="miamanav" /></a>
-<a href="https://github.com/michellemxm" title="Michelle Ma"><img src="https://github.com/michellemxm.png?size=64" width="64" height="64" alt="Michelle Ma" /></a>
-<a href="https://github.com/midega-g" title="George Midega"><img src="https://github.com/midega-g.png?size=64" width="64" height="64" alt="George Midega" /></a>
-<a href="https://github.com/mikanbox" title="Shuhei AKiyama"><img src="https://github.com/mikanbox.png?size=64" width="64" height="64" alt="Shuhei AKiyama" /></a>
-<a href="https://github.com/MikeMayer" title="Mike Mayer"><img src="https://github.com/MikeMayer.png?size=64" width="64" height="64" alt="Mike Mayer" /></a>
-<a href="https://github.com/miketheman" title="Mike Fiedler"><img src="https://github.com/miketheman.png?size=64" width="64" height="64" alt="Mike Fiedler" /></a>
-<a href="https://github.com/mikkuzne" title="Mikhail Kuznetsov"><img src="https://github.com/mikkuzne.png?size=64" width="64" height="64" alt="Mikhail Kuznetsov" /></a>
-<a href="https://github.com/mimmus" title="mimmus"><img src="https://github.com/mimmus.png?size=64" width="64" height="64" alt="mimmus" /></a>
-<a href="https://github.com/minglong51" title="Minglong Pan"><img src="https://github.com/minglong51.png?size=64" width="64" height="64" alt="Minglong Pan" /></a>
-<a href="https://github.com/mitrajparmar93" title="MRP"><img src="https://github.com/mitrajparmar93.png?size=64" width="64" height="64" alt="MRP" /></a>
-<a href="https://github.com/mkbarnum" title="mkbarnum"><img src="https://github.com/mkbarnum.png?size=64" width="64" height="64" alt="mkbarnum" /></a>
-<a href="https://github.com/mlwood-dev" title="Michael"><img src="https://github.com/mlwood-dev.png?size=64" width="64" height="64" alt="Michael" /></a>
-<a href="https://github.com/mnaameh" title="Marc El Naameh"><img src="https://github.com/mnaameh.png?size=64" width="64" height="64" alt="Marc El Naameh" /></a>
-<a href="https://github.com/MohammedAnes" title="MohammedAnes"><img src="https://github.com/MohammedAnes.png?size=64" width="64" height="64" alt="MohammedAnes" /></a>
-<a href="https://github.com/molladair" title="Molly Adair"><img src="https://github.com/molladair.png?size=64" width="64" height="64" alt="Molly Adair" /></a>
-<a href="https://github.com/mortizbey" title="Manuel Ortiz Bey"><img src="https://github.com/mortizbey.png?size=64" width="64" height="64" alt="Manuel Ortiz Bey" /></a>
-<a href="https://github.com/mrbeag" title="mrbeag"><img src="https://github.com/mrbeag.png?size=64" width="64" height="64" alt="mrbeag" /></a>
-<a href="https://github.com/mrdoro" title="Luke Dorosz"><img src="https://github.com/mrdoro.png?size=64" width="64" height="64" alt="Luke Dorosz" /></a>
-<a href="https://github.com/mrkayhyun" title="DongHyun Kim"><img src="https://github.com/mrkayhyun.png?size=64" width="64" height="64" alt="DongHyun Kim" /></a>
-<a href="https://github.com/musaprg" title="Kotaro Inoue"><img src="https://github.com/musaprg.png?size=64" width="64" height="64" alt="Kotaro Inoue" /></a>
-<a href="https://github.com/mustafaonuraydin" title="Mustafa Onur AYDIN"><img src="https://github.com/mustafaonuraydin.png?size=64" width="64" height="64" alt="Mustafa Onur AYDIN" /></a>
-<a href="https://github.com/mvanhorn" title="Matt Van Horn"><img src="https://github.com/mvanhorn.png?size=64" width="64" height="64" alt="Matt Van Horn" /></a>
-<a href="https://github.com/mvn-bachhuynh-dn" title="Bach Huynh V. VN.Danang"><img src="https://github.com/mvn-bachhuynh-dn.png?size=64" width="64" height="64" alt="Bach Huynh V. VN.Danang" /></a>
-<a href="https://github.com/nadetastic" title="Dan Kiuna"><img src="https://github.com/nadetastic.png?size=64" width="64" height="64" alt="Dan Kiuna" /></a>
-<a href="https://github.com/nagabharann" title="Nagabharan Nagendran"><img src="https://github.com/nagabharann.png?size=64" width="64" height="64" alt="Nagabharan Nagendran" /></a>
-<a href="https://github.com/nailuj24" title="Julian Aloofi"><img src="https://github.com/nailuj24.png?size=64" width="64" height="64" alt="Julian Aloofi" /></a>
-<a href="https://github.com/nameetdutia" title="nameetdutia"><img src="https://github.com/nameetdutia.png?size=64" width="64" height="64" alt="nameetdutia" /></a>
-<a href="https://github.com/namrasaheba" title="Namra Saheba"><img src="https://github.com/namrasaheba.png?size=64" width="64" height="64" alt="Namra Saheba" /></a>
-<a href="https://github.com/nateeklund" title="Nate Eklund"><img src="https://github.com/nateeklund.png?size=64" width="64" height="64" alt="Nate Eklund" /></a>
-<a href="https://github.com/nathanyi96" title="Nathan"><img src="https://github.com/nathanyi96.png?size=64" width="64" height="64" alt="Nathan" /></a>
-<a href="https://github.com/naveennvrgup" title="Naveen Sundar"><img src="https://github.com/naveennvrgup.png?size=64" width="64" height="64" alt="Naveen Sundar" /></a>
-<a href="https://github.com/nazarenkod" title="Dmitriy"><img src="https://github.com/nazarenkod.png?size=64" width="64" height="64" alt="Dmitriy" /></a>
-<a href="https://github.com/NB3025" title="Haudi"><img src="https://github.com/NB3025.png?size=64" width="64" height="64" alt="Haudi" /></a>
-<a href="https://github.com/ndbeals" title="Nathan Beals"><img src="https://github.com/ndbeals.png?size=64" width="64" height="64" alt="Nathan Beals" /></a>
-<a href="https://github.com/NDNey" title="David Ney"><img src="https://github.com/NDNey.png?size=64" width="64" height="64" alt="David Ney" /></a>
-<a href="https://github.com/newgenappsa" title="Anurag"><img src="https://github.com/newgenappsa.png?size=64" width="64" height="64" alt="Anurag" /></a>
-<a href="https://github.com/NguyenMatthew" title="Matthew Nguyen"><img src="https://github.com/NguyenMatthew.png?size=64" width="64" height="64" alt="Matthew Nguyen" /></a>
-<a href="https://github.com/nibelung-vault" title="nibelung-vault"><img src="https://github.com/nibelung-vault.png?size=64" width="64" height="64" alt="nibelung-vault" /></a>
-<a href="https://github.com/NicholasRBowers" title="Nicholas Bowers"><img src="https://github.com/NicholasRBowers.png?size=64" width="64" height="64" alt="Nicholas Bowers" /></a>
-<a href="https://github.com/nicktruby" title="Nick Truby"><img src="https://github.com/nicktruby.png?size=64" width="64" height="64" alt="Nick Truby" /></a>
-<a href="https://github.com/nihal111" title="Nihal Singh"><img src="https://github.com/nihal111.png?size=64" width="64" height="64" alt="Nihal Singh" /></a>
-<a href="https://github.com/nikhil-m-amazon" title="Nikhil Menon"><img src="https://github.com/nikhil-m-amazon.png?size=64" width="64" height="64" alt="Nikhil Menon" /></a>
-<a href="https://github.com/nikithajain888" title="nikithajain888"><img src="https://github.com/nikithajain888.png?size=64" width="64" height="64" alt="nikithajain888" /></a>
-<a href="https://github.com/NikolasPpd" title="Nick Papadopoulos"><img src="https://github.com/NikolasPpd.png?size=64" width="64" height="64" alt="Nick Papadopoulos" /></a>
-<a href="https://github.com/nishi7409" title="Nishant Srivastava"><img src="https://github.com/nishi7409.png?size=64" width="64" height="64" alt="Nishant Srivastava" /></a>
-<a href="https://github.com/nitan2k" title="nitan2k"><img src="https://github.com/nitan2k.png?size=64" width="64" height="64" alt="nitan2k" /></a>
-<a href="https://github.com/noah-guillory" title="Noah Guillory"><img src="https://github.com/noah-guillory.png?size=64" width="64" height="64" alt="Noah Guillory" /></a>
-<a href="https://github.com/nodomain" title="Fabian Fischer"><img src="https://github.com/nodomain.png?size=64" width="64" height="64" alt="Fabian Fischer" /></a>
-<a href="https://github.com/NovaPlasm" title="Beau Taylor"><img src="https://github.com/NovaPlasm.png?size=64" width="64" height="64" alt="Beau Taylor" /></a>
-<a href="https://github.com/nullabe" title="Antoine Belluard"><img src="https://github.com/nullabe.png?size=64" width="64" height="64" alt="Antoine Belluard" /></a>
-<a href="https://github.com/nyclord" title="Mark Lord"><img src="https://github.com/nyclord.png?size=64" width="64" height="64" alt="Mark Lord" /></a>
-<a href="https://github.com/oddisej" title="oddisej"><img src="https://github.com/oddisej.png?size=64" width="64" height="64" alt="oddisej" /></a>
-<a href="https://github.com/odinwang" title="Odin Wang"><img src="https://github.com/odinwang.png?size=64" width="64" height="64" alt="Odin Wang" /></a>
-<a href="https://github.com/officialprosingh" title="Parwinder Singh"><img src="https://github.com/officialprosingh.png?size=64" width="64" height="64" alt="Parwinder Singh" /></a>
-<a href="https://github.com/olowosulu" title="Emmanuel Olowosulu"><img src="https://github.com/olowosulu.png?size=64" width="64" height="64" alt="Emmanuel Olowosulu" /></a>
-<a href="https://github.com/omarMokh" title="Omar Abo Mokh"><img src="https://github.com/omarMokh.png?size=64" width="64" height="64" alt="Omar Abo Mokh" /></a>
-<a href="https://github.com/omerrubi-amzn" title="Omer Rubinstein"><img src="https://github.com/omerrubi-amzn.png?size=64" width="64" height="64" alt="Omer Rubinstein" /></a>
-<a href="https://github.com/OnlyOneByte" title="Rengang (Angelo) Yang"><img src="https://github.com/OnlyOneByte.png?size=64" width="64" height="64" alt="Rengang (Angelo) Yang" /></a>
-<a href="https://github.com/ophilli" title="Owen Phillips"><img src="https://github.com/ophilli.png?size=64" width="64" height="64" alt="Owen Phillips" /></a>
-<a href="https://github.com/parimaldeshmukh" title="Parimal Deshmukh"><img src="https://github.com/parimaldeshmukh.png?size=64" width="64" height="64" alt="Parimal Deshmukh" /></a>
-<a href="https://github.com/pasard" title="Patrick Sard"><img src="https://github.com/pasard.png?size=64" width="64" height="64" alt="Patrick Sard" /></a>
-<a href="https://github.com/patrigao" title="patrigao"><img src="https://github.com/patrigao.png?size=64" width="64" height="64" alt="patrigao" /></a>
-<a href="https://github.com/PatryckSans" title="Patryck Sans"><img src="https://github.com/PatryckSans.png?size=64" width="64" height="64" alt="Patryck Sans" /></a>
-<a href="https://github.com/pbcoder" title="pbcoder"><img src="https://github.com/pbcoder.png?size=64" width="64" height="64" alt="pbcoder" /></a>
-<a href="https://github.com/Pearcekieser" title="Pearcekieser"><img src="https://github.com/Pearcekieser.png?size=64" width="64" height="64" alt="Pearcekieser" /></a>
-<a href="https://github.com/pepmach" title="Stan Tian"><img src="https://github.com/pepmach.png?size=64" width="64" height="64" alt="Stan Tian" /></a>
-<a href="https://github.com/peterhieuvu" title="peterhieuvu"><img src="https://github.com/peterhieuvu.png?size=64" width="64" height="64" alt="peterhieuvu" /></a>
-<a href="https://github.com/philipjk" title="philipjk"><img src="https://github.com/philipjk.png?size=64" width="64" height="64" alt="philipjk" /></a>
-<a href="https://github.com/phongdh-lftv" title="Do Hoang Phong"><img src="https://github.com/phongdh-lftv.png?size=64" width="64" height="64" alt="Do Hoang Phong" /></a>
-<a href="https://github.com/pierrms" title="pierrms"><img src="https://github.com/pierrms.png?size=64" width="64" height="64" alt="pierrms" /></a>
-<a href="https://github.com/pilami" title="Sai Chaitanya Manchikatla"><img src="https://github.com/pilami.png?size=64" width="64" height="64" alt="Sai Chaitanya Manchikatla" /></a>
-<a href="https://github.com/pipelineburst" title="Dirk Michel"><img src="https://github.com/pipelineburst.png?size=64" width="64" height="64" alt="Dirk Michel" /></a>
-<a href="https://github.com/piyushrajyadav" title="Piyush Yadav"><img src="https://github.com/piyushrajyadav.png?size=64" width="64" height="64" alt="Piyush Yadav" /></a>
-<a href="https://github.com/pkot98121" title="PK98121"><img src="https://github.com/pkot98121.png?size=64" width="64" height="64" alt="PK98121" /></a>
-<a href="https://github.com/playerjamesbattleground" title="james jiang"><img src="https://github.com/playerjamesbattleground.png?size=64" width="64" height="64" alt="james jiang" /></a>
-<a href="https://github.com/pmontanari" title="Patrick MONTANARI"><img src="https://github.com/pmontanari.png?size=64" width="64" height="64" alt="Patrick MONTANARI" /></a>
-<a href="https://github.com/PNg-HA" title="PNg HA"><img src="https://github.com/PNg-HA.png?size=64" width="64" height="64" alt="PNg HA" /></a>
-<a href="https://github.com/popematt" title="Matthew Pope"><img src="https://github.com/popematt.png?size=64" width="64" height="64" alt="Matthew Pope" /></a>
-<a href="https://github.com/poyea" title="John Law"><img src="https://github.com/poyea.png?size=64" width="64" height="64" alt="John Law" /></a>
-<a href="https://github.com/pramod-123" title="Pramod Dudhi"><img src="https://github.com/pramod-123.png?size=64" width="64" height="64" alt="Pramod Dudhi" /></a>
-<a href="https://github.com/prateek98121" title="prateekk"><img src="https://github.com/prateek98121.png?size=64" width="64" height="64" alt="prateekk" /></a>
-<a href="https://github.com/Premshay" title="Premshay"><img src="https://github.com/Premshay.png?size=64" width="64" height="64" alt="Premshay" /></a>
-<a href="https://github.com/presidentarrow" title="presidentarrow"><img src="https://github.com/presidentarrow.png?size=64" width="64" height="64" alt="presidentarrow" /></a>
-<a href="https://github.com/psantus" title="Paul SANTUS"><img src="https://github.com/psantus.png?size=64" width="64" height="64" alt="Paul SANTUS" /></a>
-<a href="https://github.com/pstarkgit" title="pstarkgit"><img src="https://github.com/pstarkgit.png?size=64" width="64" height="64" alt="pstarkgit" /></a>
-<a href="https://github.com/ptias" title="ptias"><img src="https://github.com/ptias.png?size=64" width="64" height="64" alt="ptias" /></a>
-<a href="https://github.com/ptomooka" title="ptomooka"><img src="https://github.com/ptomooka.png?size=64" width="64" height="64" alt="ptomooka" /></a>
-<a href="https://github.com/qh2244" title="Qifeng Huang"><img src="https://github.com/qh2244.png?size=64" width="64" height="64" alt="Qifeng Huang" /></a>
-<a href="https://github.com/qihang-dai" title="TracerMain"><img src="https://github.com/qihang-dai.png?size=64" width="64" height="64" alt="TracerMain" /></a>
-<a href="https://github.com/qinghua" title="qinghua"><img src="https://github.com/qinghua.png?size=64" width="64" height="64" alt="qinghua" /></a>
-<a href="https://github.com/quangchu1" title="quangchu1"><img src="https://github.com/quangchu1.png?size=64" width="64" height="64" alt="quangchu1" /></a>
-<a href="https://github.com/quansea" title="quansea"><img src="https://github.com/quansea.png?size=64" width="64" height="64" alt="quansea" /></a>
-<a href="https://github.com/Qusai1201" title="Qusai Hussein"><img src="https://github.com/Qusai1201.png?size=64" width="64" height="64" alt="Qusai Hussein" /></a>
-<a href="https://github.com/r331" title="Roman Ivanov"><img src="https://github.com/r331.png?size=64" width="64" height="64" alt="Roman Ivanov" /></a>
-<a href="https://github.com/raanan245" title="raanan245"><img src="https://github.com/raanan245.png?size=64" width="64" height="64" alt="raanan245" /></a>
-<a href="https://github.com/rabinarayanpatra" title="Rabinarayan Patra"><img src="https://github.com/rabinarayanpatra.png?size=64" width="64" height="64" alt="Rabinarayan Patra" /></a>
-<a href="https://github.com/radical-beard" title="radical-beard"><img src="https://github.com/radical-beard.png?size=64" width="64" height="64" alt="radical-beard" /></a>
-<a href="https://github.com/RadiumGu" title="Lei"><img src="https://github.com/RadiumGu.png?size=64" width="64" height="64" alt="Lei" /></a>
-<a href="https://github.com/RahmLavon" title="RahmLavon"><img src="https://github.com/RahmLavon.png?size=64" width="64" height="64" alt="RahmLavon" /></a>
-<a href="https://github.com/rainsupreme" title="Rain Valentine"><img src="https://github.com/rainsupreme.png?size=64" width="64" height="64" alt="Rain Valentine" /></a>
-<a href="https://github.com/raiyanlabs" title="raiyanlabs"><img src="https://github.com/raiyanlabs.png?size=64" width="64" height="64" alt="raiyanlabs" /></a>
-<a href="https://github.com/Rajnita" title="Rajnita Leichombam"><img src="https://github.com/Rajnita.png?size=64" width="64" height="64" alt="Rajnita Leichombam" /></a>
-<a href="https://github.com/rajpuram09" title="Raj Puram"><img src="https://github.com/rajpuram09.png?size=64" width="64" height="64" alt="Raj Puram" /></a>
-<a href="https://github.com/raleycs" title="Christopher Raley"><img src="https://github.com/raleycs.png?size=64" width="64" height="64" alt="Christopher Raley" /></a>
-<a href="https://github.com/ramdavid" title="ramdavid"><img src="https://github.com/ramdavid.png?size=64" width="64" height="64" alt="ramdavid" /></a>
-<a href="https://github.com/randallwc" title="William Randall"><img src="https://github.com/randallwc.png?size=64" width="64" height="64" alt="William Randall" /></a>
-<a href="https://github.com/raphael-shin" title="Jungseob Shin"><img src="https://github.com/raphael-shin.png?size=64" width="64" height="64" alt="Jungseob Shin" /></a>
-<a href="https://github.com/RawTech" title="Luke"><img src="https://github.com/RawTech.png?size=64" width="64" height="64" alt="Luke" /></a>
-<a href="https://github.com/rbcommits" title="Raghav Bhardwaj"><img src="https://github.com/rbcommits.png?size=64" width="64" height="64" alt="Raghav Bhardwaj" /></a>
-<a href="https://github.com/rcidadef" title="Roberto Cidade Fonseca"><img src="https://github.com/rcidadef.png?size=64" width="64" height="64" alt="Roberto Cidade Fonseca" /></a>
-<a href="https://github.com/realktmr" title="realktmr"><img src="https://github.com/realktmr.png?size=64" width="64" height="64" alt="realktmr" /></a>
-<a href="https://github.com/Recscue" title="Ryan V"><img src="https://github.com/Recscue.png?size=64" width="64" height="64" alt="Ryan V" /></a>
-<a href="https://github.com/Remicks1" title="Jimmy Kilpatrick"><img src="https://github.com/Remicks1.png?size=64" width="64" height="64" alt="Jimmy Kilpatrick" /></a>
-<a href="https://github.com/rencewang" title="Lawrence Wang"><img src="https://github.com/rencewang.png?size=64" width="64" height="64" alt="Lawrence Wang" /></a>
-<a href="https://github.com/reprodev" title="ReproDev"><img src="https://github.com/reprodev.png?size=64" width="64" height="64" alt="ReproDev" /></a>
-<a href="https://github.com/richardgledhill" title="richardgledhill"><img src="https://github.com/richardgledhill.png?size=64" width="64" height="64" alt="richardgledhill" /></a>
-<a href="https://github.com/rishabh22" title="Rishabh"><img src="https://github.com/rishabh22.png?size=64" width="64" height="64" alt="Rishabh" /></a>
-<a href="https://github.com/rishabhagrawal1" title="Rishabh Agrawal"><img src="https://github.com/rishabhagrawal1.png?size=64" width="64" height="64" alt="Rishabh Agrawal" /></a>
-<a href="https://github.com/rittikg-amazon" title="rittikg-amazon"><img src="https://github.com/rittikg-amazon.png?size=64" width="64" height="64" alt="rittikg-amazon" /></a>
-<a href="https://github.com/rkeely" title="Rkee"><img src="https://github.com/rkeely.png?size=64" width="64" height="64" alt="Rkee" /></a>
-<a href="https://github.com/rlunar" title="Roberto Luna-Rojas"><img src="https://github.com/rlunar.png?size=64" width="64" height="64" alt="Roberto Luna-Rojas" /></a>
-<a href="https://github.com/rmkumari0704" title="rmkumari0704"><img src="https://github.com/rmkumari0704.png?size=64" width="64" height="64" alt="rmkumari0704" /></a>
-<a href="https://github.com/rnoack1" title="Robert Noack"><img src="https://github.com/rnoack1.png?size=64" width="64" height="64" alt="Robert Noack" /></a>
-<a href="https://github.com/robchahin" title="robchahin"><img src="https://github.com/robchahin.png?size=64" width="64" height="64" alt="robchahin" /></a>
-<a href="https://github.com/robomnis" title="Rob Weaver"><img src="https://github.com/robomnis.png?size=64" width="64" height="64" alt="Rob Weaver" /></a>
-<a href="https://github.com/robs-nice99" title="robs-nice99"><img src="https://github.com/robs-nice99.png?size=64" width="64" height="64" alt="robs-nice99" /></a>
-<a href="https://github.com/rochakgupta" title="Rochak Gupta"><img src="https://github.com/rochakgupta.png?size=64" width="64" height="64" alt="Rochak Gupta" /></a>
-<a href="https://github.com/Rocketpoodle" title="Austin Goddard"><img src="https://github.com/Rocketpoodle.png?size=64" width="64" height="64" alt="Austin Goddard" /></a>
-<a href="https://github.com/RohanK6" title="RohanK6"><img src="https://github.com/RohanK6.png?size=64" width="64" height="64" alt="RohanK6" /></a>
-<a href="https://github.com/rohit-mehra" title="Rohit Mehra"><img src="https://github.com/rohit-mehra.png?size=64" width="64" height="64" alt="Rohit Mehra" /></a>
-<a href="https://github.com/rohitjose" title="Rohit Jose"><img src="https://github.com/rohitjose.png?size=64" width="64" height="64" alt="Rohit Jose" /></a>
-<a href="https://github.com/romeoleon1" title="romeoleon1"><img src="https://github.com/romeoleon1.png?size=64" width="64" height="64" alt="romeoleon1" /></a>
-<a href="https://github.com/ronaldtfaws" title="ronaldtfaws"><img src="https://github.com/ronaldtfaws.png?size=64" width="64" height="64" alt="ronaldtfaws" /></a>
-<a href="https://github.com/ronyjacobjohn-tech" title="ronyjacobjohn-tech"><img src="https://github.com/ronyjacobjohn-tech.png?size=64" width="64" height="64" alt="ronyjacobjohn-tech" /></a>
-<a href="https://github.com/roycema-vibecoding" title="Dama"><img src="https://github.com/roycema-vibecoding.png?size=64" width="64" height="64" alt="Dama" /></a>
-<a href="https://github.com/royosherove" title="Roy Osherove"><img src="https://github.com/royosherove.png?size=64" width="64" height="64" alt="Roy Osherove" /></a>
-<a href="https://github.com/rpranshu" title="Pranshu Ranakoti"><img src="https://github.com/rpranshu.png?size=64" width="64" height="64" alt="Pranshu Ranakoti" /></a>
-<a href="https://github.com/rstomasalberto" title="Tomas Rodriguez"><img src="https://github.com/rstomasalberto.png?size=64" width="64" height="64" alt="Tomas Rodriguez" /></a>
-<a href="https://github.com/rubencu" title="Ruben Cuevas Menendez"><img src="https://github.com/rubencu.png?size=64" width="64" height="64" alt="Ruben Cuevas Menendez" /></a>
-<a href="https://github.com/rvinitra" title="rvinitra"><img src="https://github.com/rvinitra.png?size=64" width="64" height="64" alt="rvinitra" /></a>
-<a href="https://github.com/ryancormack" title="Ryan Cormack"><img src="https://github.com/ryancormack.png?size=64" width="64" height="64" alt="Ryan Cormack" /></a>
-<a href="https://github.com/ryanwx" title="Ryan"><img src="https://github.com/ryanwx.png?size=64" width="64" height="64" alt="Ryan" /></a>
-<a href="https://github.com/sallyacosta28-png" title="sallyacosta28-png"><img src="https://github.com/sallyacosta28-png.png?size=64" width="64" height="64" alt="sallyacosta28-png" /></a>
-<a href="https://github.com/sandlerr" title="Roman Sandler"><img src="https://github.com/sandlerr.png?size=64" width="64" height="64" alt="Roman Sandler" /></a>
-<a href="https://github.com/Sapientia-PT" title="João Miguel"><img src="https://github.com/Sapientia-PT.png?size=64" width="64" height="64" alt="João Miguel" /></a>
-<a href="https://github.com/sarankota" title="Saran Kota"><img src="https://github.com/sarankota.png?size=64" width="64" height="64" alt="Saran Kota" /></a>
-<a href="https://github.com/SaRedfiche" title="SaRedfiche"><img src="https://github.com/SaRedfiche.png?size=64" width="64" height="64" alt="SaRedfiche" /></a>
-<a href="https://github.com/satyam-thakur" title="Satyam Thakur"><img src="https://github.com/satyam-thakur.png?size=64" width="64" height="64" alt="Satyam Thakur" /></a>
-<a href="https://github.com/sauravgpt" title="Saurav Kumar Gupta"><img src="https://github.com/sauravgpt.png?size=64" width="64" height="64" alt="Saurav Kumar Gupta" /></a>
-<a href="https://github.com/schebotarev" title="schebotarev"><img src="https://github.com/schebotarev.png?size=64" width="64" height="64" alt="schebotarev" /></a>
-<a href="https://github.com/scuthbert" title="Sam Cuthbertson"><img src="https://github.com/scuthbert.png?size=64" width="64" height="64" alt="Sam Cuthbertson" /></a>
-<a href="https://github.com/SebastianYuSun" title="Sebastian (Yu) Sun"><img src="https://github.com/SebastianYuSun.png?size=64" width="64" height="64" alt="Sebastian (Yu) Sun" /></a>
-<a href="https://github.com/seshbalannagendran" title="Sesh Balan"><img src="https://github.com/seshbalannagendran.png?size=64" width="64" height="64" alt="Sesh Balan" /></a>
-<a href="https://github.com/Setul0712" title="Setul0712"><img src="https://github.com/Setul0712.png?size=64" width="64" height="64" alt="Setul0712" /></a>
-<a href="https://github.com/severity1" title="John Reilly Pospos"><img src="https://github.com/severity1.png?size=64" width="64" height="64" alt="John Reilly Pospos" /></a>
-<a href="https://github.com/sgpjesus" title="Sérgio Jesus"><img src="https://github.com/sgpjesus.png?size=64" width="64" height="64" alt="Sérgio Jesus" /></a>
-<a href="https://github.com/shaibarlev" title="Shai Bar-lev"><img src="https://github.com/shaibarlev.png?size=64" width="64" height="64" alt="Shai Bar-lev" /></a>
-<a href="https://github.com/shaochew" title="shaochew"><img src="https://github.com/shaochew.png?size=64" width="64" height="64" alt="shaochew" /></a>
-<a href="https://github.com/shawnxli" title="Shawn Li"><img src="https://github.com/shawnxli.png?size=64" width="64" height="64" alt="Shawn Li" /></a>
-<a href="https://github.com/ShayanYaseen" title="Shayan"><img src="https://github.com/ShayanYaseen.png?size=64" width="64" height="64" alt="Shayan" /></a>
-<a href="https://github.com/ShelbyZ" title="Shelby Hagman"><img src="https://github.com/ShelbyZ.png?size=64" width="64" height="64" alt="Shelby Hagman" /></a>
-<a href="https://github.com/shelomo" title="Shelomo Dobkin"><img src="https://github.com/shelomo.png?size=64" width="64" height="64" alt="Shelomo Dobkin" /></a>
-<a href="https://github.com/shelseyv" title="shelseyv"><img src="https://github.com/shelseyv.png?size=64" width="64" height="64" alt="shelseyv" /></a>
-<a href="https://github.com/Ship-Loop" title="Siddartha "><img src="https://github.com/Ship-Loop.png?size=64" width="64" height="64" alt="Siddartha " /></a>
-<a href="https://github.com/shortbloke" title="Martin Rowan"><img src="https://github.com/shortbloke.png?size=64" width="64" height="64" alt="Martin Rowan" /></a>
-<a href="https://github.com/ShortEmperor" title="Fabricio Escalante"><img src="https://github.com/ShortEmperor.png?size=64" width="64" height="64" alt="Fabricio Escalante" /></a>
-<a href="https://github.com/ShotaroKataoka" title="Shotaro Kataoka"><img src="https://github.com/ShotaroKataoka.png?size=64" width="64" height="64" alt="Shotaro Kataoka" /></a>
-<a href="https://github.com/shrihan-vijay" title="Shrihan Vijay"><img src="https://github.com/shrihan-vijay.png?size=64" width="64" height="64" alt="Shrihan Vijay" /></a>
-<a href="https://github.com/shubag" title="shubag"><img src="https://github.com/shubag.png?size=64" width="64" height="64" alt="shubag" /></a>
-<a href="https://github.com/skagraw16" title="skagraw16"><img src="https://github.com/skagraw16.png?size=64" width="64" height="64" alt="skagraw16" /></a>
-<a href="https://github.com/Skymore" title="Rui Tao"><img src="https://github.com/Skymore.png?size=64" width="64" height="64" alt="Rui Tao" /></a>
-<a href="https://github.com/smeyffret" title="smeyffret"><img src="https://github.com/smeyffret.png?size=64" width="64" height="64" alt="smeyffret" /></a>
-<a href="https://github.com/snoldak924" title="Sam Oldak"><img src="https://github.com/snoldak924.png?size=64" width="64" height="64" alt="Sam Oldak" /></a>
-<a href="https://github.com/snowoody" title="snowoody"><img src="https://github.com/snowoody.png?size=64" width="64" height="64" alt="snowoody" /></a>
-<a href="https://github.com/so0k" title="so0k"><img src="https://github.com/so0k.png?size=64" width="64" height="64" alt="so0k" /></a>
-<a href="https://github.com/solnikhil" title="Nikhil Solanki"><img src="https://github.com/solnikhil.png?size=64" width="64" height="64" alt="Nikhil Solanki" /></a>
-<a href="https://github.com/Soneji" title="Dhaval Soneji"><img src="https://github.com/Soneji.png?size=64" width="64" height="64" alt="Dhaval Soneji" /></a>
-<a href="https://github.com/soroush5" title="Soroush Ahmadi"><img src="https://github.com/soroush5.png?size=64" width="64" height="64" alt="Soroush Ahmadi" /></a>
-<a href="https://github.com/Souperrman" title="Divan van Biljon"><img src="https://github.com/Souperrman.png?size=64" width="64" height="64" alt="Divan van Biljon" /></a>
-<a href="https://github.com/Souptik96" title="Souptik Chakraborty"><img src="https://github.com/Souptik96.png?size=64" width="64" height="64" alt="Souptik Chakraborty" /></a>
-<a href="https://github.com/spandanagrawal" title="Spandan Gopal Agrawal"><img src="https://github.com/spandanagrawal.png?size=64" width="64" height="64" alt="Spandan Gopal Agrawal" /></a>
-<a href="https://github.com/srinivasrk" title="Srini Kulkarni"><img src="https://github.com/srinivasrk.png?size=64" width="64" height="64" alt="Srini Kulkarni" /></a>
-<a href="https://github.com/stephen-meehan-lrn" title="Stephen Meehan"><img src="https://github.com/stephen-meehan-lrn.png?size=64" width="64" height="64" alt="Stephen Meehan" /></a>
-<a href="https://github.com/stephenwiebe" title="stephenwiebe"><img src="https://github.com/stephenwiebe.png?size=64" width="64" height="64" alt="stephenwiebe" /></a>
-<a href="https://github.com/stevenjmiklovic" title="Steven J. Miklovic"><img src="https://github.com/stevenjmiklovic.png?size=64" width="64" height="64" alt="Steven J. Miklovic" /></a>
-<a href="https://github.com/stifspear" title="stifspear"><img src="https://github.com/stifspear.png?size=64" width="64" height="64" alt="stifspear" /></a>
-<a href="https://github.com/strannik19" title="strannik19"><img src="https://github.com/strannik19.png?size=64" width="64" height="64" alt="strannik19" /></a>
-<a href="https://github.com/sudhamsu" title="Sudhamsu Manne"><img src="https://github.com/sudhamsu.png?size=64" width="64" height="64" alt="Sudhamsu Manne" /></a>
-<a href="https://github.com/sugan-kumar" title="sugan-kumar"><img src="https://github.com/sugan-kumar.png?size=64" width="64" height="64" alt="sugan-kumar" /></a>
-<a href="https://github.com/sugavaneshb" title="Sugavanesh B"><img src="https://github.com/sugavaneshb.png?size=64" width="64" height="64" alt="Sugavanesh B" /></a>
-<a href="https://github.com/suhasaitham22" title="Suhas Aitham"><img src="https://github.com/suhasaitham22.png?size=64" width="64" height="64" alt="Suhas Aitham" /></a>
-<a href="https://github.com/sujeito-operator" title="Sujeito Operator"><img src="https://github.com/sujeito-operator.png?size=64" width="64" height="64" alt="Sujeito Operator" /></a>
-<a href="https://github.com/sujoydc" title="Sujoy Datta Choudhury"><img src="https://github.com/sujoydc.png?size=64" width="64" height="64" alt="Sujoy Datta Choudhury" /></a>
-<a href="https://github.com/SungjinYoo" title="Sungjin Yoo"><img src="https://github.com/SungjinYoo.png?size=64" width="64" height="64" alt="Sungjin Yoo" /></a>
-<a href="https://github.com/SwapDixit" title="Swapnil Dixit"><img src="https://github.com/SwapDixit.png?size=64" width="64" height="64" alt="Swapnil Dixit" /></a>
-<a href="https://github.com/swchoi0102" title="SangwooChoi"><img src="https://github.com/swchoi0102.png?size=64" width="64" height="64" alt="SangwooChoi" /></a>
-<a href="https://github.com/sxhmilyoyo" title="sxhmilyoyo"><img src="https://github.com/sxhmilyoyo.png?size=64" width="64" height="64" alt="sxhmilyoyo" /></a>
-<a href="https://github.com/syedmujahedalih" title="Mujahed Syed"><img src="https://github.com/syedmujahedalih.png?size=64" width="64" height="64" alt="Mujahed Syed" /></a>
-<a href="https://github.com/syncrisis" title="Syncd"><img src="https://github.com/syncrisis.png?size=64" width="64" height="64" alt="Syncd" /></a>
-<a href="https://github.com/szto" title="SoonKim"><img src="https://github.com/szto.png?size=64" width="64" height="64" alt="SoonKim" /></a>
-<a href="https://github.com/t-jones" title="Tim Jones"><img src="https://github.com/t-jones.png?size=64" width="64" height="64" alt="Tim Jones" /></a>
-<a href="https://github.com/tahodev" title="tahodev"><img src="https://github.com/tahodev.png?size=64" width="64" height="64" alt="tahodev" /></a>
-<a href="https://github.com/TakahiroIshii" title="Takahiro Ishii"><img src="https://github.com/TakahiroIshii.png?size=64" width="64" height="64" alt="Takahiro Ishii" /></a>
-<a href="https://github.com/tarikermis" title="Tarik Ermis"><img src="https://github.com/tarikermis.png?size=64" width="64" height="64" alt="Tarik Ermis" /></a>
-<a href="https://github.com/texnewmex" title="Nolan Clayton"><img src="https://github.com/texnewmex.png?size=64" width="64" height="64" alt="Nolan Clayton" /></a>
-<a href="https://github.com/the-mann" title="Marcus Mann"><img src="https://github.com/the-mann.png?size=64" width="64" height="64" alt="Marcus Mann" /></a>
-<a href="https://github.com/therohan21" title="Rohan Rajeev"><img src="https://github.com/therohan21.png?size=64" width="64" height="64" alt="Rohan Rajeev" /></a>
-<a href="https://github.com/thethomaslane" title="Thomas Lane"><img src="https://github.com/thethomaslane.png?size=64" width="64" height="64" alt="Thomas Lane" /></a>
-<a href="https://github.com/thiagoh" title="thiagoh"><img src="https://github.com/thiagoh.png?size=64" width="64" height="64" alt="thiagoh" /></a>
-<a href="https://github.com/think-imbaig" title="think-imbaig"><img src="https://github.com/think-imbaig.png?size=64" width="64" height="64" alt="think-imbaig" /></a>
-<a href="https://github.com/ThomasthWolff" title="ThomasthWolff"><img src="https://github.com/ThomasthWolff.png?size=64" width="64" height="64" alt="ThomasthWolff" /></a>
-<a href="https://github.com/thor4" title="Bryan Conklin"><img src="https://github.com/thor4.png?size=64" width="64" height="64" alt="Bryan Conklin" /></a>
-<a href="https://github.com/ThR3742" title="ThR3742"><img src="https://github.com/ThR3742.png?size=64" width="64" height="64" alt="ThR3742" /></a>
-<a href="https://github.com/tiationg-kho" title="Tiationg Kho"><img src="https://github.com/tiationg-kho.png?size=64" width="64" height="64" alt="Tiationg Kho" /></a>
-<a href="https://github.com/Tiger-0512" title="Taiga Matsunaga"><img src="https://github.com/Tiger-0512.png?size=64" width="64" height="64" alt="Taiga Matsunaga" /></a>
-<a href="https://github.com/timwukp" title="Tim WU"><img src="https://github.com/timwukp.png?size=64" width="64" height="64" alt="Tim WU" /></a>
-<a href="https://github.com/tjdwlsdlaek" title="seongjin"><img src="https://github.com/tjdwlsdlaek.png?size=64" width="64" height="64" alt="seongjin" /></a>
-<a href="https://github.com/TKssk01" title="tkssk"><img src="https://github.com/TKssk01.png?size=64" width="64" height="64" alt="tkssk" /></a>
-<a href="https://github.com/tlauda" title="Tomasz Lauda"><img src="https://github.com/tlauda.png?size=64" width="64" height="64" alt="Tomasz Lauda" /></a>
-<a href="https://github.com/tlobinger" title="Thomas Lobinger"><img src="https://github.com/tlobinger.png?size=64" width="64" height="64" alt="Thomas Lobinger" /></a>
-<a href="https://github.com/tmack8001" title="Trevor Mack"><img src="https://github.com/tmack8001.png?size=64" width="64" height="64" alt="Trevor Mack" /></a>
-<a href="https://github.com/toby-wong" title="Toby Wong"><img src="https://github.com/toby-wong.png?size=64" width="64" height="64" alt="Toby Wong" /></a>
-<a href="https://github.com/trekie86" title="Rob Wolinski"><img src="https://github.com/trekie86.png?size=64" width="64" height="64" alt="Rob Wolinski" /></a>
-<a href="https://github.com/tudit" title="Udit Tumuluri"><img src="https://github.com/tudit.png?size=64" width="64" height="64" alt="Udit Tumuluri" /></a>
-<a href="https://github.com/uatemycookie22" title="uatemycookie22"><img src="https://github.com/uatemycookie22.png?size=64" width="64" height="64" alt="uatemycookie22" /></a>
-<a href="https://github.com/udayprakash" title="Uday Prakash"><img src="https://github.com/udayprakash.png?size=64" width="64" height="64" alt="Uday Prakash" /></a>
-<a href="https://github.com/unstablebrainiac" title="Sajal Narang"><img src="https://github.com/unstablebrainiac.png?size=64" width="64" height="64" alt="Sajal Narang" /></a>
-<a href="https://github.com/uzumakichillu" title="uzumakichillu"><img src="https://github.com/uzumakichillu.png?size=64" width="64" height="64" alt="uzumakichillu" /></a>
-<a href="https://github.com/vaibhavbhatiadev" title="Vaibhav Bhatia"><img src="https://github.com/vaibhavbhatiadev.png?size=64" width="64" height="64" alt="Vaibhav Bhatia" /></a>
-<a href="https://github.com/vamgan" title="Vamil Gandhi"><img src="https://github.com/vamgan.png?size=64" width="64" height="64" alt="Vamil Gandhi" /></a>
-<a href="https://github.com/vardaan-amzn" title="vardaan-amzn"><img src="https://github.com/vardaan-amzn.png?size=64" width="64" height="64" alt="vardaan-amzn" /></a>
-<a href="https://github.com/vdurante" title="Vitor Durante"><img src="https://github.com/vdurante.png?size=64" width="64" height="64" alt="Vitor Durante" /></a>
-<a href="https://github.com/veerjain-1" title="Veer Jain"><img src="https://github.com/veerjain-1.png?size=64" width="64" height="64" alt="Veer Jain" /></a>
-<a href="https://github.com/venkatvb" title="Venkatesh Babu AR"><img src="https://github.com/venkatvb.png?size=64" width="64" height="64" alt="Venkatesh Babu AR" /></a>
-<a href="https://github.com/vidanov" title="Alexey Vidanov"><img src="https://github.com/vidanov.png?size=64" width="64" height="64" alt="Alexey Vidanov" /></a>
-<a href="https://github.com/vinayshah1998" title="Vinay Shah"><img src="https://github.com/vinayshah1998.png?size=64" width="64" height="64" alt="Vinay Shah" /></a>
-<a href="https://github.com/vishal-sahoo" title="Vishal Sahoo"><img src="https://github.com/vishal-sahoo.png?size=64" width="64" height="64" alt="Vishal Sahoo" /></a>
-<a href="https://github.com/vishalvignesh" title="Vishal Vignesh"><img src="https://github.com/vishalvignesh.png?size=64" width="64" height="64" alt="Vishal Vignesh" /></a>
-<a href="https://github.com/vishwanath-uppala" title="Vishwanath Uppala"><img src="https://github.com/vishwanath-uppala.png?size=64" width="64" height="64" alt="Vishwanath Uppala" /></a>
-<a href="https://github.com/vitaminac" title="vitaminac"><img src="https://github.com/vitaminac.png?size=64" width="64" height="64" alt="vitaminac" /></a>
-<a href="https://github.com/vivek-tiwari-amazon" title="vivek-tiwari-amazon"><img src="https://github.com/vivek-tiwari-amazon.png?size=64" width="64" height="64" alt="vivek-tiwari-amazon" /></a>
-<a href="https://github.com/vokako" title="vokako"><img src="https://github.com/vokako.png?size=64" width="64" height="64" alt="vokako" /></a>
-<a href="https://github.com/w-wei105" title="w-wei105"><img src="https://github.com/w-wei105.png?size=64" width="64" height="64" alt="w-wei105" /></a>
-<a href="https://github.com/warren830" title="Warren Chen"><img src="https://github.com/warren830.png?size=64" width="64" height="64" alt="Warren Chen" /></a>
-<a href="https://github.com/WBui" title="WBui"><img src="https://github.com/WBui.png?size=64" width="64" height="64" alt="WBui" /></a>
-<a href="https://github.com/Walsen" title="Sergio D. Rodríguez Inclán"><img src="https://github.com/Walsen.png?size=64" width="64" height="64" alt="Sergio D. Rodríguez Inclán" /></a>
-<a href="https://github.com/wang-shihao" title="Arthur, Shihao Wang"><img src="https://github.com/wang-shihao.png?size=64" width="64" height="64" alt="Arthur, Shihao Wang" /></a>
-<a href="https://github.com/wannaFlyKa" title="Yao"><img src="https://github.com/wannaFlyKa.png?size=64" width="64" height="64" alt="Yao" /></a>
-<a href="https://github.com/wbowditch" title="Will Bowditch"><img src="https://github.com/wbowditch.png?size=64" width="64" height="64" alt="Will Bowditch" /></a>
-<a href="https://github.com/weihe08" title="weihe08"><img src="https://github.com/weihe08.png?size=64" width="64" height="64" alt="weihe08" /></a>
-<a href="https://github.com/weinansi" title="weinansi"><img src="https://github.com/weinansi.png?size=64" width="64" height="64" alt="weinansi" /></a>
-<a href="https://github.com/welikoiwanenko" title="Vadym Velykoivanenko"><img src="https://github.com/welikoiwanenko.png?size=64" width="64" height="64" alt="Vadym Velykoivanenko" /></a>
-<a href="https://github.com/wenliwyan" title="wenliwyan"><img src="https://github.com/wenliwyan.png?size=64" width="64" height="64" alt="wenliwyan" /></a>
-<a href="https://github.com/werainkhatri" title="Viren Khatri"><img src="https://github.com/werainkhatri.png?size=64" width="64" height="64" alt="Viren Khatri" /></a>
-<a href="https://github.com/william-davies" title="William Davies"><img src="https://github.com/william-davies.png?size=64" width="64" height="64" alt="William Davies" /></a>
-<a href="https://github.com/wknight1" title="wknight1"><img src="https://github.com/wknight1.png?size=64" width="64" height="64" alt="wknight1" /></a>
-<a href="https://github.com/wmaillard" title="Will Maillard"><img src="https://github.com/wmaillard.png?size=64" width="64" height="64" alt="Will Maillard" /></a>
-<a href="https://github.com/wu5bocheng" title="wu5bocheng"><img src="https://github.com/wu5bocheng.png?size=64" width="64" height="64" alt="wu5bocheng" /></a>
-<a href="https://github.com/wundram" title="wundram"><img src="https://github.com/wundram.png?size=64" width="64" height="64" alt="wundram" /></a>
-<a href="https://github.com/xcom923" title="xcom923"><img src="https://github.com/xcom923.png?size=64" width="64" height="64" alt="xcom923" /></a>
-<a href="https://github.com/Xianwen-Peng" title="Xianwen-Peng"><img src="https://github.com/Xianwen-Peng.png?size=64" width="64" height="64" alt="Xianwen-Peng" /></a>
-<a href="https://github.com/xiaochao17" title="xiaochao17"><img src="https://github.com/xiaochao17.png?size=64" width="64" height="64" alt="xiaochao17" /></a>
-<a href="https://github.com/xj921022" title="xj921022"><img src="https://github.com/xj921022.png?size=64" width="64" height="64" alt="xj921022" /></a>
-<a href="https://github.com/XTX-TXT" title="XTX-TXT"><img src="https://github.com/XTX-TXT.png?size=64" width="64" height="64" alt="XTX-TXT" /></a>
-<a href="https://github.com/xuejinT" title="Serena Tan"><img src="https://github.com/xuejinT.png?size=64" width="64" height="64" alt="Serena Tan" /></a>
-<a href="https://github.com/Xyand" title="Albert"><img src="https://github.com/Xyand.png?size=64" width="64" height="64" alt="Albert" /></a>
-<a href="https://github.com/y2k-shubham" title="Shubham Gupta"><img src="https://github.com/y2k-shubham.png?size=64" width="64" height="64" alt="Shubham Gupta" /></a>
-<a href="https://github.com/yashwanthkorla" title="Yashwanth Korla"><img src="https://github.com/yashwanthkorla.png?size=64" width="64" height="64" alt="Yashwanth Korla" /></a>
-<a href="https://github.com/yehuizhang" title="Yehui"><img src="https://github.com/yehuizhang.png?size=64" width="64" height="64" alt="Yehui" /></a>
-<a href="https://github.com/YifanL9" title="Yifan"><img src="https://github.com/YifanL9.png?size=64" width="64" height="64" alt="Yifan" /></a>
-<a href="https://github.com/yilong016" title="yilong016"><img src="https://github.com/yilong016.png?size=64" width="64" height="64" alt="yilong016" /></a>
-<a href="https://github.com/yogeshselvarajan" title="Yogesh Selvarajan"><img src="https://github.com/yogeshselvarajan.png?size=64" width="64" height="64" alt="Yogesh Selvarajan" /></a>
-<a href="https://github.com/yohanesss" title="Yohanes Setiawan"><img src="https://github.com/yohanesss.png?size=64" width="64" height="64" alt="Yohanes Setiawan" /></a>
-<a href="https://github.com/yoshidashingo" title="Shingo YOSHIDA 吉田真吾"><img src="https://github.com/yoshidashingo.png?size=64" width="64" height="64" alt="Shingo YOSHIDA 吉田真吾" /></a>
-<a href="https://github.com/yousefdebaz-fivexlio" title="Yousef De Baz"><img src="https://github.com/yousefdebaz-fivexlio.png?size=64" width="64" height="64" alt="Yousef De Baz" /></a>
-<a href="https://github.com/yurenji" title="0xzs95"><img src="https://github.com/yurenji.png?size=64" width="64" height="64" alt="0xzs95" /></a>
-<a href="https://github.com/yuwesu" title="Sypher Su"><img src="https://github.com/yuwesu.png?size=64" width="64" height="64" alt="Sypher Su" /></a>
-<a href="https://github.com/yystats78-uk" title="yystats78-uk"><img src="https://github.com/yystats78-uk.png?size=64" width="64" height="64" alt="yystats78-uk" /></a>
-<a href="https://github.com/yytdfc" title="yytdfc"><img src="https://github.com/yytdfc.png?size=64" width="64" height="64" alt="yytdfc" /></a>
-<a href="https://github.com/zach-herridge" title="Zach Herridge"><img src="https://github.com/zach-herridge.png?size=64" width="64" height="64" alt="Zach Herridge" /></a>
-<a href="https://github.com/zachakin" title="Zach Akin-Amland"><img src="https://github.com/zachakin.png?size=64" width="64" height="64" alt="Zach Akin-Amland" /></a>
-<a href="https://github.com/zakil-02" title="Zakaria Akil"><img src="https://github.com/zakil-02.png?size=64" width="64" height="64" alt="Zakaria Akil" /></a>
-<a href="https://github.com/zander8807" title="zander8807"><img src="https://github.com/zander8807.png?size=64" width="64" height="64" alt="zander8807" /></a>
-<a href="https://github.com/Zedmor" title="Akim Akimov"><img src="https://github.com/Zedmor.png?size=64" width="64" height="64" alt="Akim Akimov" /></a>
-<a href="https://github.com/zeiadzaf" title="Zeiad"><img src="https://github.com/zeiadzaf.png?size=64" width="64" height="64" alt="Zeiad" /></a>
-<a href="https://github.com/Zhang-Zhaolong" title="Zhaolong Zhang"><img src="https://github.com/Zhang-Zhaolong.png?size=64" width="64" height="64" alt="Zhaolong Zhang" /></a>
-<a href="https://github.com/ZheLyu" title="Zhe Lyu"><img src="https://github.com/ZheLyu.png?size=64" width="64" height="64" alt="Zhe Lyu" /></a>
-<a href="https://github.com/ZhengfeiJi" title="Ji"><img src="https://github.com/ZhengfeiJi.png?size=64" width="64" height="64" alt="Ji" /></a>
-<a href="https://github.com/zhihonl" title="zhihonl"><img src="https://github.com/zhihonl.png?size=64" width="64" height="64" alt="zhihonl" /></a>
-<a href="https://github.com/ZhongkaiLiu" title="Zhongkai Liu"><img src="https://github.com/ZhongkaiLiu.png?size=64" width="64" height="64" alt="Zhongkai Liu" /></a>
-<a href="https://github.com/zhulinn" title="Lin Zhu"><img src="https://github.com/zhulinn.png?size=64" width="64" height="64" alt="Lin Zhu" /></a>
-<a href="https://github.com/zifengxiazx" title="zifengxiazx"><img src="https://github.com/zifengxiazx.png?size=64" width="64" height="64" alt="zifengxiazx" /></a>
-<a href="https://github.com/ZXCharlotte486" title="真寻Charlotte"><img src="https://github.com/ZXCharlotte486.png?size=64" width="64" height="64" alt="真寻Charlotte" /></a>
+### Code intelligence / Tree-sitter adapter
 
-Listed alphabetically by GitHub username. Internal contributors appear here if they
-consented to public recognition in the contributor survey; open-source contributors are
-collected automatically from this repository's merged pull requests — both the author of
-each pull request and the people who reported the issues it closed, so a report that
-led to a real change is credited like the change itself. Contributions that leave
-neither trace — a code review, a translation, an idea, a private security report — are
-added on request. If you contributed and would like to be
-added, corrected, or removed, please open an issue or a pull request.
+`code_symbols` is always available as a read-only structural tool. When the
+optional Tree-sitter runtime plus Python/JavaScript/TypeScript grammars are
+installed, it uses Tree-sitter syntax trees; otherwise Python files use an
+explicit stdlib `ast` fallback. JavaScript/TypeScript structural analysis requires
+Tree-sitter. `code_query` is **not advertised at all** unless the complete
+Tree-sitter adapter is importable, so the model is never shown a capability the
+runtime cannot execute.
 
-## License
+For a standalone Python installation:
 
-Kiro Crew is licensed under the [Apache License 2.0](LICENSE). See
-[NOTICE](NOTICE) for attribution information.
+```text
+pip install -e ".[code-intel]"
+```
+
+KiroCrew Apps execute backend hooks inside Crew's Python environment, so the App
+integration does not silently run `pip install` or mutate that interpreter. To
+enable Tree-sitter there, install the optional dependencies into the exact Crew
+backend interpreter through an operator-controlled deployment step. Python
+`code_symbols` remains usable without that optional install.
+
+The filesystem tools share the same canonical allowed-root and sensitive-path
+boundary. `delete_file` never removes directories. Windows `shell` uses PowerShell
+with cwd, timeout, cancellation and process-tree termination. `web_fetch` and
+`web_search` are separate Crew permission capabilities and reject localhost,
+private/link-local destinations, embedded URL credentials, oversized responses
+and unsafe redirects. The bundled search backend is intentionally lightweight and
+can be less reliable than a commercial search API; MCP remains available for
+provider-specific search services.
+
+Policy file:
+
+```text
+<KIRO_BYO_HOME>\config\native_tools.json
+```
+
+Important boundaries:
+
+- filesystem paths are canonicalized and checked against allowed roots;
+- symlink/junction escape and explicit sensitive locations are rejected;
+- `read_only` can disable filesystem mutation and shell execution globally;
+- `web_enabled` can hide/disable both native web tools;
+- web timeout/response-size limits are app-owned hard execution boundaries;
+- hard-denied sensitive paths and impossible requests fail before user approval;
+- an otherwise valid filesystem target outside `cwd` / `additionalDirectories` can request a narrow Crew-hosted grant: allow-once is revoked after the call and allow-always is scoped to the current Kiro BYO session only;
+- every executable call that survives local hard-deny checks is still governed by KiroCrew permission/trust policy: fresh safe `allowedTools` grants may run no-prompt, while unmatched calls traverse `session/request_permission`;
+- Kiro BYO has no second per-tool user-approval system that can bypass Crew and dynamic directory grants never rewrite the global policy file.
+
+PowerShell still executes with the current Windows user's OS authority. Root
+checks, approval, timeout and cancellation are not an OS sandbox; strong shell
+filesystem confinement requires a Windows isolation boundary such as Restricted
+Token/AppContainer/ACL design.
+
+## MCP
+
+Kiro BYO supports MCP over **stdio** and **Streamable HTTP** across the current and
+legacy wire eras used by supported servers.
+
+For the modern protocol it probes `server/discover`, negotiates an actually
+supported common protocol version, validates discovery/tool-list cache metadata,
+and handles HTTP routing/session headers per request. `-32022
+UnsupportedProtocolVersion` is not treated as automatic proof of a legacy server:
+legacy fallback occurs only when the server's advertised support provides valid
+legacy evidence. Deprecated standalone SSE fails closed.
+
+Legacy stdio negotiation reuses the same child process/connection rather than
+spawning a second process after probing. Interactive modern results that require
+unsupported host projection fail closed rather than being silently converted to
+success.
+
+## Usage and records
+
+When the provider reports token usage, prompt responses preserve input/output,
+reasoning tokens and cache signals. Cache **read** and cache **write/creation** tokens
+are tracked separately when the provider exposes both (for example Anthropic-style
+prompt caching); an unreported cache field remains unknown rather than being shown as
+zero. When the real model context window is known, Kiro BYO emits
+`usage_update {used,size}` so Crew can display a real context meter. No fake context
+window is emitted for unknown models.
+
+Turn telemetry is committed before the ACP prompt result returns. Records distinguish
+success, cancellation and typed failures (`transport`, provider/runtime and control-plane
+categories), record bounded transport retry/fallback counts, and aggregate recent Provider/model
+health without storing prompt/reply/tool bodies. The lower-level runtime trace also records incoming
+`session/cancel` source and elapsed time, making client-side cancellation boundaries observable.
+
+Premature HTTP/SSE EOF and connection failures are normalized at the provider boundary. A
+pristine transport failure can receive one bounded retry; failures after visible output do not
+replay automatically. Failed read-only turns roll back to their pre-turn transcript boundary,
+while a turn that admitted a potentially mutating tool preserves the relevant transcript and
+adds a recovery marker so the next turn verifies uncertain side effects before retrying. A
+single upstream/runtime failure therefore must not require creating a new ACP conversation.
+
+## Verification
+
+Run the full source suite:
+
+```powershell
+$env:PYTHONPATH="src"
+python -m pytest -q
+```
+
+Run the no-write Crew semantic verifier against an installed Crew package:
+
+```powershell
+$env:PYTHONPATH="src"
+python scripts\verify_crew10_integration.py --crew-package "C:\Users\<you>\AppData\Local\Programs\KiroCrew\resources\backend-dist\kirocrew-backend\Lib\site-packages\kiro_crew"
+```
+
+After installing the adapter into a semantically compatible Crew package, the
+expected legacy backend-card summary is:
+
+```text
+Crew-derived score: native Kiro 8/10; Kiro BYO 9/10
+PASS: semantic seams compile; source-shape-appropriate Crew selectability contract is active
+```
+
+See `WINDOWS_QUICKSTART.md` for the real-machine acceptance sequence,
+`AUDIT_CURRENT.md` for the current third-party-style audit evidence,
+`ARCHITECTURE_BOUNDARY.md` for Crew/Kiro BYO ownership, and
+`PARITY_IMPLEMENTATION.md` for the historical 0.9.10 implementation record.
+Historical release notes belong in `CHANGELOG.md`, not in this README.
